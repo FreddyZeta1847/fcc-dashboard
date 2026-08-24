@@ -24,3 +24,14 @@ itself — see `CLAUDE.md` for the sanitization rule.
 - 2026-08-25 — BACKEND--api: API surface decision
 - 2026-08-25 — BACKEND--process-control: external-process control decision
 - 2026-08-25 — cross-review: cross-feature consistency fixes (BACKEND / DATE-TIME / PRICING-ENGINE)
+- 2026-08-25 — FRONTEND--architecture: UI structure architecture decision
+- 2026-08-25 — FRONTEND--technologies: frontend technology choices
+- 2026-08-25 — FRONTEND--caching: caching approach for frontend data
+- 2026-08-25 — FRONTEND--security: security approach for the frontend UI
+- 2026-08-25 — FRONTEND--resilience: resilience handling for frontend failure states
+- 2026-08-25 — FRONTEND--overview: overview page component decision
+- 2026-08-25 — FRONTEND--usage: usage page component decision
+- 2026-08-25 — FRONTEND--settings: settings page component decision
+- 2026-08-25 — FRONTEND--database: database page component decision
+- 2026-08-25 — cross-review: cross-feature consistency fixes (FRONTEND / DATE-TIME / PRICING-ENGINE / BACKEND)
+- 2026-08-25 — project breakdown: all 4 planned features now fully documented
