@@ -15,3 +15,12 @@ itself — see `CLAUDE.md` for the sanitization rule.
 - 2026-08-24 — PRICING-ENGINE--resilience: resilience handling for pricing-data failures
 - 2026-08-24 — PRICING-ENGINE--price-refresh: price-refresh workflow decision
 - 2026-08-24 — cross-review: cross-feature consistency fix (PRICING-ENGINE / DATE-TIME)
+- 2026-08-25 — BACKEND--architecture: data-persistence architecture decision
+- 2026-08-25 — BACKEND--technologies: backend technology choices
+- 2026-08-25 — BACKEND--caching: caching approach for backend data
+- 2026-08-25 — BACKEND--security: security approach for the backend API
+- 2026-08-25 — BACKEND--resilience: resilience handling for backend failure modes
+- 2026-08-25 — BACKEND--collector: log-collection component decision
+- 2026-08-25 — BACKEND--api: API surface decision
+- 2026-08-25 — BACKEND--process-control: external-process control decision
+- 2026-08-25 — cross-review: cross-feature consistency fixes (BACKEND / DATE-TIME / PRICING-ENGINE)
