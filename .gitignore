@@ -1,0 +1,18 @@
+# Private planning/docs (never public)
+.claude/
+vault-fcc-dashboard/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
