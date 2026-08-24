@@ -1,3 +1,2 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Tailwind CSS entry point — imported once in main.tsx. */
+@import "tailwindcss";
