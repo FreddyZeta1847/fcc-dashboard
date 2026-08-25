@@ -45,7 +45,16 @@ CREATE TABLE IF NOT EXISTS requests (
     equivalent_cost REAL,
     savings REAL,
     status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'completed', 'error'))
 )
+"""
+
+_CREATE_REQUESTS_OCCURRED_AT_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_requests_occurred_at ON requests(occurred_at)
+"""
+
+_CREATE_REQUESTS_STATUS_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status)
 """
 
 _CREATE_COLLECTOR_STATE_TABLE = """
@@ -76,13 +85,31 @@ def init_db(path: str | Path) -> sqlite3.Connection:
 
     Returns a connection with `row_factory = sqlite3.Row`, so result rows
     are accessible by column name (`row["provider"]`) as well as by index.
+
+    The connection is configured for Phase 3's multi-threaded access
+    (Starlette's threadpool for sync endpoints, plus the collector's
+    background polling potentially sharing this connection):
+    `check_same_thread=False` lifts sqlite3's default single-thread
+    ownership restriction, `timeout=30.0` makes a caller that hits a locked
+    database wait and retry rather than fail immediately, WAL (write-ahead
+    logging) mode lets readers and a writer proceed concurrently instead of
+    blocking each other, and `busy_timeout` is WAL's own analogous wait
+    setting enforced inside SQLite itself. WAL is skipped for `:memory:`
+    databases (the pragma doesn't apply there, and an in-memory database
+    can't usefully be shared across threads/processes anyway) but the
+    other pragmas are still harmless to set.
     """
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    if str(path) != ":memory:":
+        conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
 
     conn.execute(_CREATE_REQUESTS_TABLE)
     conn.execute(_CREATE_COLLECTOR_STATE_TABLE)
     conn.execute(_ENSURE_COLLECTOR_STATE_ROW)
+    conn.execute(_CREATE_REQUESTS_OCCURRED_AT_INDEX)
+    conn.execute(_CREATE_REQUESTS_STATUS_INDEX)
     conn.commit()
 
     return conn

@@ -22,9 +22,17 @@ a later event for the same `request_id`. Each event type's `ON CONFLICT
 ... DO UPDATE SET` clause is therefore deliberately narrow: it lists only
 the columns that specific event is allowed to touch, so a later event can
 never clobber data only an earlier event was responsible for (e.g. a
-"provider.response.completed" upsert must never overwrite the `provider`/
-`gateway_model`/`downstream_model` that only "provider.request.sent"
-carries, and vice versa).
+"provider.response.completed" upsert must never overwrite the `gateway_model`/
+`downstream_model` that only "provider.request.sent" carries, and vice
+versa). `provider` is a deliberate partial exception to this: FCC's
+"provider.response.completed" line also carries a `provider` field, so its
+upsert writes `provider = COALESCE(provider, excluded.provider)` -- the
+existing row's own value wins whenever it's already set, and the incoming
+event's value is used only to fill in a currently-NULL `provider` (the
+"orphan row" case,
+where `completed` arrives with no prior `request.sent` for that
+`request_id`), and never overwrites an already-known value, so the normal
+case (`request.sent` arrives first and sets `provider`) is unaffected.
 """
 
 import hashlib
@@ -55,10 +63,11 @@ ON CONFLICT(request_id) DO UPDATE SET
 
 _RESPONSE_COMPLETED_SQL = """
 INSERT INTO requests (
-    request_id, output_tokens, input_tokens, input_tokens_estimate,
+    request_id, provider, output_tokens, input_tokens, input_tokens_estimate,
     finish_reason, occurred_at, occurred_at_is_estimated, ingested_at, status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed')
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed')
 ON CONFLICT(request_id) DO UPDATE SET
+    provider = COALESCE(provider, excluded.provider),
     output_tokens = excluded.output_tokens,
     input_tokens = excluded.input_tokens,
     input_tokens_estimate = excluded.input_tokens_estimate,
@@ -92,7 +101,7 @@ def _resolve_occurred_at(event: dict) -> tuple[str, int]:
         try:
             parsed = parse_fcc_timestamp(raw_time)
             return to_utc_iso8601(parsed), 0
-        except ValueError:
+        except (ValueError, TypeError):
             pass
     return now_utc_iso8601(), 1
 
@@ -136,6 +145,7 @@ def apply_trace_event(conn: sqlite3.Connection, event: dict) -> None:
             _RESPONSE_COMPLETED_SQL,
             (
                 request_id,
+                event.get("provider"),
                 event.get("output_tokens"),
                 event.get("prompt_tokens"),
                 event.get("prompt_tokens_estimate"),
@@ -179,6 +189,16 @@ WHERE id = 1
 # JSON content), small enough to read on every single poll without it
 # mattering performance-wise.
 _HEAD_FINGERPRINT_BYTES = 256
+
+# Upper bound on how many bytes a single poll() reads from the log file.
+# FCC logs unconditionally, and the very first "catch-up" poll (after the
+# dashboard hasn't been open for a while) could otherwise face an
+# arbitrarily large unread region and try to read it all into memory in one
+# call. Capping the read composes for free with the existing
+# "last complete line" logic below: a chunk that ends mid-line just gets
+# picked up whole on the next poll, since that logic already handles a
+# trailing partial line regardless of *why* the chunk ended where it did.
+_MAX_READ_BYTES = 8 * 1024 * 1024  # 8 MB
 
 
 def _hash_bytes(data: bytes) -> str:
@@ -238,6 +258,9 @@ def poll_once(conn: sqlite3.Connection, log_path: str | Path) -> int:
     machine yet). Never lets a single malformed/unprocessable log line
     abort the poll -- see the per-line loop below for exactly which
     failures are treated that way and which are allowed to propagate.
+    Also never raises if the file disappears, gets rotated, or becomes
+    briefly unreadable *after* the `exists()` check above -- see the
+    `OSError` guard below.
     """
     log_path = Path(log_path)
 
@@ -255,37 +278,57 @@ def poll_once(conn: sqlite3.Connection, log_path: str | Path) -> int:
     last_known_file_size = state["last_known_file_size"]
     last_known_head_hash = state["last_known_head_hash"]
 
-    current_size = log_path.stat().st_size
-    with open(log_path, "rb") as f:
-        head_bytes = f.read(_HEAD_FINGERPRINT_BYTES)
-    # Bound the hashed region to current_size: a writer appending between the
-    # stat() above and this read can make head_bytes longer than current_size
-    # while the file is still under the fingerprint window, which would
-    # otherwise store a hash covering more bytes than the next poll's
-    # comparison_window expects and falsely declare truncation.
-    new_head_hash = _hash_bytes(head_bytes[: min(current_size, _HEAD_FINGERPRINT_BYTES)])
+    # The exists() check above and every filesystem call below (stat/open/
+    # read) form a TOCTOU (time-of-check-to-time-of-use) gap: FCC could
+    # delete or rotate the file, or a permission/antivirus lock could kick
+    # in, at any point in between. Treat any such failure as "nothing to
+    # read this tick" rather than letting it crash the caller -- Phase 4
+    # calls poll_once from a recurring timer, and one bad tick must not
+    # kill the whole loop.
+    try:
+        current_size = log_path.stat().st_size
+        with open(log_path, "rb") as f:
+            head_bytes = f.read(_HEAD_FINGERPRINT_BYTES)
+        # Bound the hashed region to current_size: a writer appending between
+        # the stat() above and this read can make head_bytes longer than
+        # current_size while the file is still under the fingerprint window,
+        # which would otherwise store a hash covering more bytes than the
+        # next poll's comparison_window expects and falsely declare
+        # truncation.
+        new_head_hash = _hash_bytes(
+            head_bytes[: min(current_size, _HEAD_FINGERPRINT_BYTES)]
+        )
 
-    # Only the portion of the file we'd already seen last poll is safe to
-    # compare -- see the docstring's "ramp-up" note.
-    comparison_window = min(last_known_file_size, _HEAD_FINGERPRINT_BYTES)
+        # Only the portion of the file we'd already seen last poll is safe
+        # to compare -- see the docstring's "ramp-up" note.
+        comparison_window = min(last_known_file_size, _HEAD_FINGERPRINT_BYTES)
 
-    if last_known_head_hash is None or comparison_window == 0:
-        # First-ever poll (or the file was empty last time): nothing
-        # established yet to compare against, so there's nothing to
-        # detect a restart against either.
-        truncated = False
-    elif current_size < comparison_window:
-        # The file no longer even contains the region we last fingerprinted
-        # -- can't be a pure-append continuation of it.
-        truncated = True
-    else:
-        truncated = _hash_bytes(head_bytes[:comparison_window]) != last_known_head_hash
+        if last_known_head_hash is None or comparison_window == 0:
+            # First-ever poll (or the file was empty last time): nothing
+            # established yet to compare against, so there's nothing to
+            # detect a restart against either.
+            truncated = False
+        elif current_size < comparison_window:
+            # The file no longer even contains the region we last
+            # fingerprinted -- can't be a pure-append continuation of it.
+            truncated = True
+        else:
+            truncated = _hash_bytes(head_bytes[:comparison_window]) != last_known_head_hash
 
-    start_offset = 0 if truncated else last_offset
+        start_offset = 0 if truncated else last_offset
+        # Defensive: seeking past EOF should be structurally unreachable
+        # given the logic above, but clamp anyway so it can never happen,
+        # e.g. under some future change to the truncation logic.
+        start_offset = min(start_offset, current_size)
 
-    with open(log_path, "rb") as f:
-        f.seek(start_offset)
-        chunk = f.read()
+        with open(log_path, "rb") as f:
+            f.seek(start_offset)
+            chunk = f.read(_MAX_READ_BYTES)
+    except OSError as exc:
+        logger.warning(
+            "Skipping poll of %s due to a filesystem error: %s", log_path, exc
+        )
+        return 0
 
     applied_count = 0
     bytes_consumed = 0
@@ -297,7 +340,23 @@ def poll_once(conn: sqlite3.Connection, log_path: str | Path) -> int:
         # finished -- either way it gets picked up whole on the next poll,
         # rather than risk decoding/parsing a half-written line now.
         last_newline_idx = chunk.rfind(b"\n")
-        if last_newline_idx != -1:
+        if last_newline_idx == -1 and len(chunk) == _MAX_READ_BYTES:
+            # We hit the read cap without finding a single newline -- this
+            # isn't the ordinary "writer hasn't finished this line yet"
+            # case (that would show up as a short chunk ending exactly at
+            # EOF); it means one line by itself exceeds _MAX_READ_BYTES.
+            # Leaving last_offset where it is would re-read this same
+            # oversized fragment forever, so skip past it: treat the whole
+            # capped chunk as consumed and let the next poll pick up
+            # wherever the real line eventually ends.
+            logger.warning(
+                "Skipping oversized log line (> %d bytes) in %s; "
+                "advancing past it without parsing.",
+                _MAX_READ_BYTES,
+                log_path,
+            )
+            bytes_consumed = len(chunk)
+        elif last_newline_idx != -1:
             complete_bytes = chunk[: last_newline_idx + 1]
             bytes_consumed = len(complete_bytes)
             try:
