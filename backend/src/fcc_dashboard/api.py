@@ -83,6 +83,7 @@ from .dependencies import (  # noqa: F401 (re-exported)
     get_pricing_config_path,
 )
 from .process_control import is_tracked_fcc_process
+from .static import mount_static_files
 
 DEFAULT_DB_PATH = Path.home() / ".fcc-dashboard" / "fcc_dashboard.db"
 
@@ -164,3 +165,7 @@ app.include_router(routes_stats.router)
 app.include_router(routes_pricing.router)
 app.include_router(routes_db.router)
 app.include_router(routes_control.router)
+
+# Must stay last: a pure catch-all for whatever no route above matched, so
+# it can never shadow a real API route (see static.py's module docstring).
+mount_static_files(app)
