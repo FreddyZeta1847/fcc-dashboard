@@ -19,6 +19,7 @@ substitute a default price.
 """
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -52,3 +53,65 @@ def compute_cost(price: dict, *, input_tokens: int, output_tokens: int) -> float
     return (input_tokens / 1_000_000) * price["input_per_million"] + (
         output_tokens / 1_000_000
     ) * price["output_per_million"]
+
+
+@dataclass(frozen=True)
+class SavingsResult:
+    """Result of the per-request savings calculation.
+
+    `unknown=True` means the (provider, downstream_model) pair has no
+    configured price — actual_cost/equivalent_cost/savings are all None in
+    that case, never substituted with 0. A genuinely-configured $0 price
+    (a real free tier) is `unknown=False` with `actual_cost=0.0`.
+    """
+
+    actual_cost: float | None
+    equivalent_cost: float | None
+    savings: float | None
+    unknown: bool
+
+
+def compute_savings(
+    config: dict,
+    *,
+    provider: str,
+    downstream_model: str,
+    gateway_model: str,
+    input_tokens: int,
+    output_tokens: int,
+) -> SavingsResult:
+    """Compute the savings formula for one request.
+
+    actual_cost = tokens x price of the real (provider, downstream_model) pair FCC routed to.
+    equivalent_cost = same tokens x Anthropic price of the gateway_model tier FCC intercepted.
+    savings = equivalent_cost - actual_cost.
+
+    Returns a SavingsResult with unknown=True (all costs None) if the actual
+    provider/model pair isn't configured — never assumed free.
+
+    Raises ValueError if `gateway_model` isn't a configured Anthropic tier —
+    that's a real configuration error (every FCC-supported tier must be
+    priced), not a "some provider is missing" case.
+    """
+    actual_price = lookup_price(config, provider, downstream_model)
+    if actual_price is None:
+        return SavingsResult(
+            actual_cost=None, equivalent_cost=None, savings=None, unknown=True
+        )
+
+    anthropic_price = lookup_anthropic_price(config, gateway_model)
+    if anthropic_price is None:
+        raise ValueError(f"no Anthropic price configured for tier {gateway_model!r}")
+
+    actual_cost = compute_cost(
+        actual_price, input_tokens=input_tokens, output_tokens=output_tokens
+    )
+    equivalent_cost = compute_cost(
+        anthropic_price, input_tokens=input_tokens, output_tokens=output_tokens
+    )
+    return SavingsResult(
+        actual_cost=actual_cost,
+        equivalent_cost=equivalent_cost,
+        savings=equivalent_cost - actual_cost,
+        unknown=False,
+    )
