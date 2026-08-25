@@ -2,6 +2,9 @@
 .claude/
 vault-fcc-dashboard/
 
+# superpowers subagent-driven-development scratch workspace
+.superpowers/
+
 # Python
 __pycache__/
 *.pyc

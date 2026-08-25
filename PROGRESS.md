@@ -35,3 +35,4 @@ itself — see `CLAUDE.md` for the sanitization rule.
 - 2026-08-25 — FRONTEND--database: database page component decision
 - 2026-08-25 — cross-review: cross-feature consistency fixes (FRONTEND / DATE-TIME / PRICING-ENGINE / BACKEND)
 - 2026-08-25 — project breakdown: all 4 planned features now fully documented
+- 2026-08-25 — PHASE-0-SCAFFOLDING: implementation phase complete
