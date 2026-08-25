@@ -628,6 +628,19 @@ def test_run_collector_loop_survives_poll_once_exception_and_logs_it(
     # momentarily locked database) must not kill the loop's task -- it must
     # be logged loudly and the loop must keep polling on the next tick,
     # instead of collection silently and permanently stopping.
+    #
+    # This test used to wait a fixed `asyncio.sleep(0.035)` window (the same
+    # budget the sibling test above uses) and then assert `call_count >= 2`.
+    # That's a race, not a guarantee: unlike the sibling, this test's first
+    # poll pays for a cold `run_in_threadpool` worker-thread spawn AND a full
+    # `logging.exception` traceback format when the mocked poll_once raises,
+    # so an occasional cold first iteration (measured up to ~43.5ms) blows
+    # past the 35ms budget and fails even though the loop behaved correctly.
+    # Fix: don't race a clock at all -- poll `call_count` itself (a plain
+    # int, safe to read/write across the run_in_threadpool worker thread
+    # under the GIL) in a tight loop with a generous overall timeout, and
+    # stop waiting the instant the real condition (2 calls observed) is
+    # true. This removes the race entirely instead of just widening it.
     call_count = 0
 
     def flaky_poll_once(conn, log_path):
@@ -645,7 +658,16 @@ def test_run_collector_loop_survives_poll_once_exception_and_logs_it(
 
     async def run():
         task = asyncio.create_task(collector_module.run_collector_loop(db, interval=0.01))
-        await asyncio.sleep(0.035)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 2.0  # generous; warm iterations land in 12-29ms
+        while call_count < 2:
+            if loop.time() > deadline:
+                raise AssertionError(
+                    f"Only {call_count} poll_once call(s) observed after a "
+                    "2s timeout waiting for the loop to survive the first "
+                    "call's exception and re-poll."
+                )
+            await asyncio.sleep(0.005)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
