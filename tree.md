@@ -11,18 +11,33 @@
 │   ├── src/
 │   │   └── fcc_dashboard/
 │   │       ├── __init__.py
+│   │       ├── __main__.py
+│   │       ├── api.py
 │   │       ├── collector.py
 │   │       ├── datetime_utils.py
 │   │       ├── db.py
+│   │       ├── dependencies.py
 │   │       ├── log_parser.py
-│   │       └── pricing.py
+│   │       ├── pricing.py
+│   │       ├── routes_db.py
+│   │       ├── routes_pricing.py
+│   │       ├── routes_requests.py
+│   │       ├── routes_stats.py
+│   │       └── routes_status.py
 │   ├── tests/
+│   │   ├── conftest.py
+│   │   ├── test_api.py
 │   │   ├── test_collector.py
 │   │   ├── test_datetime_utils.py
 │   │   ├── test_db.py
 │   │   ├── test_log_parser.py
 │   │   ├── test_placeholder.py
-│   │   └── test_pricing.py
+│   │   ├── test_pricing.py
+│   │   ├── test_routes_db.py
+│   │   ├── test_routes_pricing.py
+│   │   ├── test_routes_requests.py
+│   │   ├── test_routes_stats.py
+│   │   └── test_routes_status.py
 │   ├── .python-version
 │   ├── pyproject.toml
 │   ├── README.md
@@ -32,7 +47,8 @@
 │       └── plans/
 │           ├── 2026-08-25-phase-0-scaffolding.md
 │           ├── 2026-08-25-phase-1-core-utilities.md
-│           └── 2026-08-25-phase-2-persistence-collector.md
+│           ├── 2026-08-25-phase-2-persistence-collector.md
+│           └── 2026-08-25-phase-3-api.md
 ├── frontend/
 │   ├── public/
 │   │   └── favicon.svg

@@ -41,3 +41,5 @@ itself — see `CLAUDE.md` for the sanitization rule.
 - 2026-08-25 — PHASE-2-PERSISTENCE-COLLECTOR: implementation phase complete
 - 2026-08-25 — BACKEND--architecture: persistence schema revision (resilience gap found in review)
 - 2026-08-25 — BACKEND--resilience: failure-detection rule revision (same review)
+- 2026-08-25 — PHASE-3-API: implementation phase complete
+- 2026-08-25 — BACKEND--api: pricing-endpoint validation revision (config-robustness gap found in review)
