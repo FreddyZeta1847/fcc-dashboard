@@ -51,3 +51,4 @@ itself — see `CLAUDE.md` for the sanitization rule.
 - 2026-08-25 — PRICING-ENGINE: write-path validation gap fixed (found in final review)
 - 2026-08-25 — BACKEND--api: stats-endpoint aggregate extension (usage breakdown, found while planning Phase 6a)
 - 2026-08-25 — PHASE-6b-USAGE-PAGE: implementation phase complete — vault Phase 6 (all 4 dashboard pages) fully done
+- 2026-08-25 — BACKEND--collector: background poll-loop shutdown-safety fix (concurrency gap found while wiring the scheduler)
