@@ -85,6 +85,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "tzdata" },
     { name = "tzlocal" },
     { name = "uvicorn", extra = ["standard"] },
@@ -92,23 +93,20 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.141.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "tzdata", specifier = ">=2024.1" },
     { name = "tzlocal", specifier = ">=5.4.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4" },
 ]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "pytest", specifier = ">=9.1.1" },
-]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "h11"
