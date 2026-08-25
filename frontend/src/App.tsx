@@ -11,13 +11,14 @@
  * backend goes down must still see this screen, not a broken page — so
  * the tab useState and Nav render only past both branches, in the
  * "backend reachable" return. Task 1 adds the tab shell (Overview, Usage,
- * Settings, Database); Task 3 wires in the real Database page. Settings
- * still renders a placeholder until Task 7 builds it.
+ * Settings, Database); Task 3 wires in the real Database page; Task 7
+ * wires in the real Settings page.
  */
 import { useState } from 'react'
 import { useStatus } from './hooks/useStatus'
 import { Overview } from './pages/Overview'
 import { Database } from './pages/Database'
+import { Settings } from './pages/Settings'
 import { Nav, type Tab } from './components/Nav'
 
 function App() {
@@ -49,7 +50,7 @@ function App() {
       <Nav activeTab={tab} onTabChange={setTab} />
       {tab === 'overview' && <Overview />}
       {tab === 'usage' && <div className="p-4">Usage — coming soon</div>}
-      {tab === 'settings' && <div className="p-4">Settings — coming soon</div>}
+      {tab === 'settings' && <Settings />}
       {tab === 'database' && <Database />}
     </div>
   )
