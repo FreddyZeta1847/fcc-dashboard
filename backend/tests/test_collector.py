@@ -1,9 +1,11 @@
 """Unit tests for backend.fcc_dashboard.collector's apply_trace_event."""
 
 import json
+import sqlite3
 
 import pytest
 
+import fcc_dashboard.collector as collector_module
 from fcc_dashboard.collector import apply_trace_event, poll_once
 from fcc_dashboard.db import init_db
 
@@ -242,6 +244,11 @@ def test_poll_once_returns_zero_when_file_does_not_exist(conn, tmp_path):
 
 
 def test_poll_once_detects_truncation_and_rereads_from_start(conn, tmp_path):
+    # Note: req_1's and req_2's lines below are, by construction, exactly
+    # the same byte length -- this specifically exercises the case pure
+    # size comparison cannot catch (current_size == last_known_file_size
+    # after the restart, so a naive "size shrank" check never fires). The
+    # head-fingerprint hash is what has to catch this one.
     log_path = tmp_path / "server.log"
     _write_log(log_path, [
         json.dumps({
@@ -255,7 +262,8 @@ def test_poll_once_detects_truncation_and_rereads_from_start(conn, tmp_path):
     ])
     poll_once(conn, log_path)  # last_offset now points past this line
 
-    # Simulate FCC restarting: log file truncated and replaced with new content
+    # Simulate FCC restarting: log file truncated and replaced with new
+    # content of the exact same size (not smaller -- see note above).
     _write_log(log_path, [
         json.dumps({
             "event": "provider.request.sent",
@@ -271,6 +279,54 @@ def test_poll_once_detects_truncation_and_rereads_from_start(conn, tmp_path):
     row = _row(conn, "req_2")
     assert row is not None
     assert row["provider"] == "openrouter"
+
+
+def test_poll_once_detects_truncation_when_new_content_is_larger(conn, tmp_path):
+    # A restart doesn't just shrink or preserve the file's size -- FCC
+    # could easily have logged a lot more before this poll ever ran (e.g.
+    # the dashboard was offline for a while, FCC kept writing, then also
+    # restarted). The new file here is deliberately much larger than the
+    # old one, which a plain "size < last_known_file_size" check would
+    # read as ordinary growth, not a restart.
+    log_path = tmp_path / "server.log"
+    _write_log(log_path, [
+        json.dumps({
+            "event": "provider.request.sent",
+            "time": "2026-07-16 13:55:49.563956+02:00",
+            "request_id": "req_1",
+            "provider": "nvidia_nim",
+            "gateway_model": "sonnet",
+            "downstream_model": "glm-4",
+        }),
+    ])
+    poll_once(conn, log_path)  # last_offset now points past this one short line
+
+    # Simulate FCC restarting after logging a lot more than before --
+    # several lines, comfortably larger than the original file.
+    _write_log(log_path, [
+        json.dumps({
+            "event": "provider.request.sent",
+            "time": "2026-08-01 09:00:00.000000+02:00",
+            "request_id": f"req_new_{i}",
+            "provider": "openrouter",
+            "gateway_model": "opus",
+            "downstream_model": "kimi-k2",
+        })
+        for i in range(5)
+    ])
+    count = poll_once(conn, log_path)
+    assert count == 5  # all 5 new-generation lines, not zero and not a partial re-read
+    for i in range(5):
+        row = _row(conn, f"req_new_{i}")
+        assert row is not None
+        assert row["provider"] == "openrouter"
+    # req_1's row from before the restart is untouched history (the
+    # collector never deletes rows) -- it must still have its original
+    # provider, not something corrupted by misreading the new file at the
+    # old (now-meaningless) byte offset.
+    old_row = _row(conn, "req_1")
+    assert old_row is not None
+    assert old_row["provider"] == "nvidia_nim"
 
 
 def test_poll_once_skips_malformed_and_irrelevant_lines_without_crashing(conn, tmp_path):
@@ -291,3 +347,40 @@ def test_poll_once_skips_malformed_and_irrelevant_lines_without_crashing(conn, t
     assert count == 1  # only the one real trace event
     row = _row(conn, "req_1")
     assert row is not None
+
+
+def test_poll_once_does_not_swallow_real_database_errors(conn, tmp_path, monkeypatch):
+    # The per-line guard exists to skip a BAD LINE, not to hide a broken
+    # database. A real infrastructure failure (sqlite3.Error and
+    # subclasses -- e.g. a locked database) must propagate out of
+    # poll_once, not be silently caught alongside malformed-data errors
+    # like a bad "time" field. Simulate this by making apply_trace_event
+    # itself raise a genuine sqlite3 error and confirming it is NOT
+    # swallowed.
+    log_path = tmp_path / "server.log"
+    _write_log(log_path, [
+        json.dumps({
+            "event": "provider.request.sent",
+            "time": "2026-07-16 13:55:49.563956+02:00",
+            "request_id": "req_1",
+            "provider": "nvidia_nim",
+            "gateway_model": "sonnet",
+            "downstream_model": "glm-4",
+        }),
+    ])
+
+    def _boom(_conn, _event):
+        raise sqlite3.OperationalError("simulated database error")
+
+    monkeypatch.setattr(collector_module, "apply_trace_event", _boom)
+
+    with pytest.raises(sqlite3.OperationalError):
+        poll_once(conn, log_path)
+
+    # Since the DB error aborted the poll before the collector_state
+    # UPDATE ran, last_offset must still be at its original value (0) --
+    # the next poll will naturally retry this same line, not skip it.
+    state = conn.execute(
+        "SELECT last_offset FROM collector_state WHERE id = 1"
+    ).fetchone()
+    assert state["last_offset"] == 0

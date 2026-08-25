@@ -27,6 +27,8 @@ never clobber data only an earlier event was responsible for (e.g. a
 carries, and vice versa).
 """
 
+import hashlib
+import logging
 import sqlite3
 from pathlib import Path
 
@@ -36,6 +38,8 @@ from fcc_dashboard.datetime_utils import (
     to_utc_iso8601,
 )
 from fcc_dashboard.log_parser import parse_log_line
+
+logger = logging.getLogger(__name__)
 
 _REQUEST_SENT_SQL = """
 INSERT INTO requests (
@@ -165,9 +169,20 @@ def apply_trace_event(conn: sqlite3.Connection, event: dict) -> None:
 
 _UPDATE_COLLECTOR_STATE_SQL = """
 UPDATE collector_state
-SET last_offset = ?, last_known_file_size = ?, last_known_mtime_ns = ?, last_run_at = ?
+SET last_offset = ?, last_known_file_size = ?, last_known_head_hash = ?, last_run_at = ?
 WHERE id = 1
 """
+
+# How many leading bytes of the log file we fingerprint for truncation
+# detection. Large enough that two genuinely different files essentially
+# never collide by chance (SHA-256 over a couple hundred bytes of real
+# JSON content), small enough to read on every single poll without it
+# mattering performance-wise.
+_HEAD_FINGERPRINT_BYTES = 256
+
+
+def _hash_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 def poll_once(conn: sqlite3.Connection, log_path: str | Path) -> int:
@@ -183,25 +198,46 @@ def poll_once(conn: sqlite3.Connection, log_path: str | Path) -> int:
     Truncation/rotation detection (BACKEND--resilience): FCC is a long-running
     process that gets restarted from time to time, and on restart its log
     file is recreated (truncated to empty, or replaced by a new file)
-    rather than appended to forever. If the file's current size is
-    *smaller* than the size we saw last time, the file we're looking at can't
-    be the same one we left off in the middle of -- `last_offset` would point
-    past EOF or into unrelated new content. In that case we throw away the
-    stale offset and start over from byte 0 instead of trusting it.
+    rather than appended to forever. Whenever that happens, `last_offset`
+    can no longer be trusted -- it might point past EOF, or (worse) land
+    at a byte position that just happens to still exist in the new file
+    but no longer means what it used to.
 
-    A same-size rewrite is the one case pure size comparison can't catch:
-    if the replacement content happens to land on exactly the same byte
-    count as before, "size < last_known_file_size" never fires even though
-    every byte at `last_offset` is now unrelated new content. The file's
-    modification time (`last_known_mtime_ns`) is used as a secondary
-    signal for exactly this case: size unchanged but mtime changed, with a
-    file we've actually seen data in before, is still treated as a restart.
-    Size unchanged *and* mtime unchanged means nothing happened at all
-    (the ordinary "polled again, nothing new" case) and is left alone.
+    Comparing file *size* alone cannot detect this reliably: a restart's
+    replacement content could come out smaller (the naive case), the exact
+    same size (size comparison alone would see no change at all), or even
+    *larger* than before (very plausible here -- e.g. the dashboard was
+    offline for a while, FCC kept logging, then also restarted; the new
+    file can easily already exceed the old recorded size by the time the
+    next poll runs). None of those three outcomes is reliably distinguishable
+    from ordinary incremental growth using size or mtime alone.
+
+    Instead, `collector_state.last_known_head_hash` stores a SHA-256
+    fingerprint of the file's leading `_HEAD_FINGERPRINT_BYTES` bytes.
+    Because FCC only ever *appends* to a live log, those leading bytes are
+    invariant under normal growth -- an append can never change what's
+    already at the start of the file. So if the file's current leading
+    bytes hash differently than what we fingerprinted last time, the file
+    beneath `last_offset` isn't a continuation of what we were reading --
+    it was truncated and replaced -- regardless of whether the new size is
+    smaller, equal, or larger. Reset `last_offset` to 0 in that case.
+
+    One subtlety: while the file is still shorter than
+    `_HEAD_FINGERPRINT_BYTES`, its "leading bytes" are just the whole file,
+    and legitimate appends *do* grow that window (there's more file to
+    read now). To stay append-safe during this ramp-up phase, the
+    comparison only ever looks at `min(last_known_file_size,
+    _HEAD_FINGERPRINT_BYTES)` bytes -- i.e. only the portion of the file
+    that was already there last time we looked, which pure appends can
+    never change. Once the file has grown past `_HEAD_FINGERPRINT_BYTES`,
+    that window is pinned at exactly `_HEAD_FINGERPRINT_BYTES` and never
+    changes again, which is the simple "fingerprint of the first N bytes"
+    picture in steady state.
 
     Never raises on a missing file (FCC simply hasn't been run on this
-    machine yet) or on any single malformed/unparseable log line -- both are
-    treated as "nothing useful here", not as errors.
+    machine yet). Never lets a single malformed/unprocessable log line
+    abort the poll -- see the per-line loop below for exactly which
+    failures are treated that way and which are allowed to propagate.
     """
     log_path = Path(log_path)
 
@@ -212,22 +248,34 @@ def poll_once(conn: sqlite3.Connection, log_path: str | Path) -> int:
         return 0
 
     state = conn.execute(
-        "SELECT last_offset, last_known_file_size, last_known_mtime_ns "
+        "SELECT last_offset, last_known_file_size, last_known_head_hash "
         "FROM collector_state WHERE id = 1"
     ).fetchone()
     last_offset = state["last_offset"]
     last_known_file_size = state["last_known_file_size"]
-    last_known_mtime_ns = state["last_known_mtime_ns"]
+    last_known_head_hash = state["last_known_head_hash"]
 
-    file_stat = log_path.stat()
-    current_size = file_stat.st_size
-    current_mtime_ns = file_stat.st_mtime_ns
+    current_size = log_path.stat().st_size
+    with open(log_path, "rb") as f:
+        head_bytes = f.read(_HEAD_FINGERPRINT_BYTES)
+    new_head_hash = _hash_bytes(head_bytes)
 
-    truncated = current_size < last_known_file_size or (
-        current_size == last_known_file_size
-        and last_known_file_size > 0
-        and current_mtime_ns != last_known_mtime_ns
-    )
+    # Only the portion of the file we'd already seen last poll is safe to
+    # compare -- see the docstring's "ramp-up" note.
+    comparison_window = min(last_known_file_size, _HEAD_FINGERPRINT_BYTES)
+
+    if last_known_head_hash is None or comparison_window == 0:
+        # First-ever poll (or the file was empty last time): nothing
+        # established yet to compare against, so there's nothing to
+        # detect a restart against either.
+        truncated = False
+    elif current_size < comparison_window:
+        # The file no longer even contains the region we last fingerprinted
+        # -- can't be a pure-append continuation of it.
+        truncated = True
+    else:
+        truncated = _hash_bytes(head_bytes[:comparison_window]) != last_known_head_hash
+
     start_offset = 0 if truncated else last_offset
 
     with open(log_path, "rb") as f:
@@ -260,27 +308,49 @@ def poll_once(conn: sqlite3.Connection, log_path: str | Path) -> int:
             for line in text.split("\n"):
                 if not line:
                     continue
+                # parse_log_line never raises (Task 2's contract) -- a
+                # malformed or irrelevant line just comes back as None and
+                # is silently skipped, per BACKEND--resilience ("a
+                # well-formed JSON line that isn't a trace event is not an
+                # error"). What CAN still fail is applying an event whose
+                # shape looks right but whose data doesn't hold up (e.g. a
+                # "time" field that's a JSON number instead of a string,
+                # which raises TypeError out of apply_trace_event's
+                # timestamp parsing).
+                event = parse_log_line(line)
+                if event is None:
+                    continue
                 try:
-                    event = parse_log_line(line)
-                    if event is not None:
-                        apply_trace_event(conn, event)
-                        applied_count += 1
-                except Exception:
-                    # BACKEND--resilience: one bad line must never crash the
-                    # collector loop. parse_log_line and apply_trace_event
-                    # are each designed to never raise on their own, but
-                    # this is the actual backstop the loop relies on (e.g.
-                    # a "time" field that's a JSON number instead of a
-                    # string would otherwise raise a TypeError out of
-                    # apply_trace_event's timestamp parsing) -- skip the
-                    # offending line and keep going.
+                    apply_trace_event(conn, event)
+                    applied_count += 1
+                except (ValueError, TypeError, KeyError) as exc:
+                    # BACKEND--resilience: "skip the line, log a warning,
+                    # keep going" -- one bad line must never crash the
+                    # collector loop. Only data-shape failures are caught
+                    # here; anything else (notably sqlite3.Error, e.g. a
+                    # locked database) is a real infrastructure problem,
+                    # not a bad line, and is allowed to propagate. Every
+                    # event applied earlier in this same poll already
+                    # committed (apply_trace_event commits per-event), so
+                    # aborting here loses nothing already-applied; the
+                    # collector_state UPDATE below simply never runs, so
+                    # the next poll retries from this same last_offset --
+                    # idempotent, no data loss, no double-counting.
+                    logger.warning(
+                        "Skipping malformed trace event in %s "
+                        "(event=%r, request_id=%r): %s",
+                        log_path,
+                        event.get("event"),
+                        event.get("request_id"),
+                        exc,
+                    )
                     continue
 
     new_offset = start_offset + bytes_consumed
 
     conn.execute(
         _UPDATE_COLLECTOR_STATE_SQL,
-        (new_offset, current_size, current_mtime_ns, now_utc_iso8601()),
+        (new_offset, current_size, new_head_hash, now_utc_iso8601()),
     )
     conn.commit()
 
