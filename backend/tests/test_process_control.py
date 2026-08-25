@@ -103,6 +103,59 @@ def test_launch_detached_calls_launch_detached_args_with_executable_path(monkeyp
     assert calls == [[str(fake_executable)]]
 
 
+def test_terminate_process_survives_access_denied_enumerating_children(monkeypatch):
+    """`process.children(recursive=True)` raising AccessDenied must not stop
+    `terminate_process` from still stopping the main tracked process -- the
+    main process was already successfully reached (it's not the same as the
+    main process itself being inaccessible), we just couldn't see its
+    children.
+    """
+    pid = launch_detached_for_test(_dummy_executable_args(30))
+    assert is_process_alive(pid)
+
+    def raise_access_denied(self, recursive=False):
+        raise process_control.psutil.AccessDenied(pid=self.pid)
+
+    monkeypatch.setattr(
+        process_control.psutil.Process, "children", raise_access_denied
+    )
+
+    try:
+        result = terminate_process(pid, timeout=5.0)
+        assert result is True
+        assert is_process_alive(pid) is False
+    finally:
+        monkeypatch.undo()
+        terminate_process(pid)
+
+
+def test_terminate_process_swallows_access_denied_on_child_terminate(monkeypatch):
+    """A child whose `.terminate()` raises AccessDenied must be skipped
+    (best-effort), not propagate out of `terminate_process` and not stop
+    the main tracked process from being terminated.
+    """
+    pid = launch_detached_for_test(_dummy_executable_args(30))
+    assert is_process_alive(pid)
+
+    class _FakeAccessDeniedChild:
+        def terminate(self):
+            raise process_control.psutil.AccessDenied(pid=999_999)
+
+    monkeypatch.setattr(
+        process_control.psutil.Process,
+        "children",
+        lambda self, recursive=False: [_FakeAccessDeniedChild()],
+    )
+
+    try:
+        result = terminate_process(pid, timeout=5.0)
+        assert result is True
+        assert is_process_alive(pid) is False
+    finally:
+        monkeypatch.undo()
+        terminate_process(pid)
+
+
 def test_terminate_process_also_terminates_child_processes():
     parent_script = (
         "import subprocess, sys, time; "

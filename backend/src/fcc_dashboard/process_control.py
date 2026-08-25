@@ -177,22 +177,44 @@ def terminate_process(pid: int, timeout: float = 5.0) -> bool:
     potentially still holding FCC's port. `psutil` is already a
     dependency, so walking and terminating the child tree costs little
     even if `fcc-server` never actually forks. This step is best-effort
-    and never fails the overall call -- a child that's already gone (or
-    that we can't see) is simply skipped.
+    and never fails the overall call -- a child that's already gone, or
+    one we're denied permission to touch, is simply skipped.
     """
     if not is_process_alive(pid):
         return True
 
     try:
         process = psutil.Process(pid)
-        children = process.children(recursive=True)
     except psutil.NoSuchProcess:
+        # The main process vanished between the alive check above and
+        # here (race) -- already stopped, nothing left to do.
         return True
+    except psutil.AccessDenied:
+        # Can't even get a handle on the main process -- no stop attempt
+        # is possible, so this is a failure to terminate, not a "already
+        # stopped" case.
+        return False
+
+    try:
+        children = process.children(recursive=True)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        # Unlike the case above, this does NOT mean the main process is
+        # gone or unreachable -- `process` itself was already
+        # successfully constructed. NoSuchProcess here means the process
+        # exited between construction and this call (its own terminate()
+        # below will then correctly report "already gone" and return
+        # True); AccessDenied means we can see the process but aren't
+        # permitted to enumerate its children. Either way, we still need
+        # to proceed to terminate `process` itself below -- we just have
+        # no children to best-effort terminate first.
+        children = []
 
     for child in children:
         try:
             child.terminate()
-        except psutil.NoSuchProcess:
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            # Child already gone, or we're not permitted to signal it --
+            # best-effort only, never blocks stopping the main process.
             pass
 
     try:
@@ -207,5 +229,7 @@ def terminate_process(pid: int, timeout: float = 5.0) -> bool:
                 pass
     except psutil.NoSuchProcess:
         return True
+    except psutil.AccessDenied:
+        return False
 
     return not is_process_alive(pid)
