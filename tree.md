@@ -55,7 +55,8 @@
 │           ├── 2026-08-25-phase-3-api.md
 │           ├── 2026-08-25-phase-4-process-control.md
 │           ├── 2026-08-25-phase-5-frontend-scaffold-overview.md
-│           └── 2026-08-25-phase-6a-settings-database.md
+│           ├── 2026-08-25-phase-6a-settings-database.md
+│           └── 2026-08-25-phase-6b-usage-page.md
 ├── frontend/
 │   ├── public/
 │   │   └── favicon.svg
@@ -76,10 +77,14 @@
 │   │   │   ├── PricingEditor.tsx
 │   │   │   ├── ProcessControls.test.tsx
 │   │   │   ├── ProcessControls.tsx
+│   │   │   ├── RangeSelector.test.tsx
+│   │   │   ├── RangeSelector.tsx
 │   │   │   ├── RecentRequestsFeed.test.tsx
 │   │   │   ├── RecentRequestsFeed.tsx
 │   │   │   ├── StatusPanel.test.tsx
-│   │   │   └── StatusPanel.tsx
+│   │   │   ├── StatusPanel.tsx
+│   │   │   ├── VolumeChart.test.tsx
+│   │   │   └── VolumeChart.tsx
 │   │   ├── hooks/
 │   │   │   ├── useControl.ts
 │   │   │   ├── useDbTables.ts
@@ -94,7 +99,9 @@
 │   │   │   ├── Overview.test.tsx
 │   │   │   ├── Overview.tsx
 │   │   │   ├── Settings.test.tsx
-│   │   │   └── Settings.tsx
+│   │   │   ├── Settings.tsx
+│   │   │   ├── Usage.test.tsx
+│   │   │   └── Usage.tsx
 │   │   ├── test/
 │   │   │   ├── setup.test.ts
 │   │   │   └── setup.ts

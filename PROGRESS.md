@@ -49,3 +49,5 @@ itself — see `CLAUDE.md` for the sanitization rule.
 - 2026-08-25 — PHASE-5-FRONTEND-SCAFFOLD-OVERVIEW: implementation phase complete
 - 2026-08-25 — PHASE-6a-SETTINGS-DATABASE: implementation phase complete
 - 2026-08-25 — PRICING-ENGINE: write-path validation gap fixed (found in final review)
+- 2026-08-25 — BACKEND--api: stats-endpoint aggregate extension (usage breakdown, found while planning Phase 6a)
+- 2026-08-25 — PHASE-6b-USAGE-PAGE: implementation phase complete — vault Phase 6 (all 4 dashboard pages) fully done
