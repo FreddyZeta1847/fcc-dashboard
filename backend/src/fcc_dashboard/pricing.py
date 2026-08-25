@@ -28,22 +28,50 @@ def load_pricing_config(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _validate_price_entry(entry: dict, *, context: str) -> dict:
+    """Confirm a pricing config entry has numeric input/output rates.
+
+    Raises ValueError naming the offending entry if a rate key is missing
+    or non-numeric — this turns a malformed config edit (or a future
+    `PUT /pricing` write) into a clear error instead of an opaque KeyError
+    surfacing later inside `compute_cost`.
+    """
+    for key in ("input_per_million", "output_per_million"):
+        if key not in entry:
+            raise ValueError(f"pricing entry for {context} is missing {key!r}")
+        if not isinstance(entry[key], (int, float)):
+            raise ValueError(f"pricing entry for {context} has non-numeric {key!r}: {entry[key]!r}")
+    return entry
+
+
 def lookup_price(config: dict, provider: str, model: str) -> dict | None:
     """Look up the price entry for a (provider, model) pair.
 
     Returns None if the pair isn't in the config — this is a genuinely
     different case from a configured price of 0.0 (a real free tier), and
     callers must not conflate the two.
+
+    Raises ValueError if the entry is found but malformed (missing or
+    non-numeric rate keys).
     """
-    return config.get("providers", {}).get(provider, {}).get(model)
+    entry = config.get("providers", {}).get(provider, {}).get(model)
+    if entry is None:
+        return None
+    return _validate_price_entry(entry, context=f"({provider!r}, {model!r})")
 
 
 def lookup_anthropic_price(config: dict, tier: str) -> dict | None:
     """Look up the Anthropic price for a gateway tier ('opus'/'sonnet'/'haiku').
 
     Returns None if the tier isn't configured.
+
+    Raises ValueError if the entry is found but malformed (missing or
+    non-numeric rate keys).
     """
-    return config.get("anthropic", {}).get(tier)
+    entry = config.get("anthropic", {}).get(tier)
+    if entry is None:
+        return None
+    return _validate_price_entry(entry, context=f"anthropic tier {tier!r}")
 
 
 def compute_cost(price: dict, *, input_tokens: int, output_tokens: int) -> float:

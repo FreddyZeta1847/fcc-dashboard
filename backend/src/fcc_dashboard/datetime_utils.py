@@ -17,15 +17,16 @@ at "parse correctly, or raise clearly."
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-import tzlocal
-
 
 def parse_fcc_timestamp(raw: str) -> datetime:
     """Parse FCC's log timestamp format into an aware datetime.
 
-    Raises ValueError if `raw` is not a valid ISO-8601 timestamp.
+    Raises ValueError if `raw` is not a valid ISO-8601 timestamp with a UTC offset.
     """
-    return datetime.fromisoformat(raw)
+    dt = datetime.fromisoformat(raw)
+    if dt.tzinfo is None:
+        raise ValueError(f"timestamp has no UTC offset: {raw!r}")
+    return dt
 
 
 def to_utc_iso8601(dt: datetime) -> str:
@@ -34,6 +35,9 @@ def to_utc_iso8601(dt: datetime) -> str:
     Format: "YYYY-MM-DDTHH:MM:SS.mmmZ" (millisecond precision, "Z" suffix).
     Raises ValueError if `dt` is naive (no timezone info) — every timestamp
     this module handles must already be aware.
+
+    Sub-millisecond precision is truncated, not rounded — this can never
+    push a timestamp forward across a time boundary.
     """
     if dt.tzinfo is None:
         raise ValueError("to_utc_iso8601 requires an aware datetime")
@@ -53,6 +57,13 @@ def now_utc_iso8601() -> str:
 
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _local_zone() -> ZoneInfo:
+    """Resolve the host machine's local IANA timezone (DST-correct)."""
+    import tzlocal
+
+    return ZoneInfo(tzlocal.get_localzone_name())
 
 
 def resolve_range_boundaries(
@@ -75,9 +86,12 @@ def resolve_range_boundaries(
     timezone and the real current time (per DATE-TIME--architecture: no
     timezone parameter is ever exposed to the frontend or API).
 
+    The returned range is inclusive of `start` and inclusive of `end`
+    (callers should query `start <= occurred_at <= end`).
+
     Raises ValueError for an unrecognized range_name.
     """
-    tz = ZoneInfo(local_tz) if local_tz is not None else ZoneInfo(tzlocal.get_localzone_name())
+    tz = ZoneInfo(local_tz) if local_tz is not None else _local_zone()
     current = now if now is not None else datetime.now(tz)
     if current.tzinfo is None:
         current = current.replace(tzinfo=tz)

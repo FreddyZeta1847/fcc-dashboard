@@ -34,6 +34,16 @@ def test_parse_fcc_timestamp_rejects_empty_string():
         parse_fcc_timestamp("")
 
 
+def test_parse_fcc_timestamp_rejects_date_only_string():
+    with pytest.raises(ValueError):
+        parse_fcc_timestamp("2026-07-16")
+
+
+def test_parse_fcc_timestamp_rejects_offsetless_datetime():
+    with pytest.raises(ValueError):
+        parse_fcc_timestamp("2026-07-16 13:55:49.563956")
+
+
 def test_to_utc_iso8601_converts_offset_to_utc_with_z_suffix():
     dt = datetime(2026, 7, 16, 13, 55, 49, 563000, tzinfo=timezone.utc)
     # 13:55:49 UTC+2 == 11:55:49 UTC
@@ -109,25 +119,21 @@ def test_resolve_range_boundaries_uses_real_local_time_by_default():
     assert end.endswith("Z")
 
 
-def test_resolve_range_boundaries_default_uses_real_zoneinfo_not_fixed_offset():
-    import tzlocal
-    from zoneinfo import ZoneInfo
+def test_local_zone_returns_real_zoneinfo():
+    from fcc_dashboard.datetime_utils import _local_zone
 
-    zone_name = tzlocal.get_localzone_name()
-    expected_tz = ZoneInfo(zone_name)
-    # Two dates 200 days apart will differ in DST status somewhere in most
-    # real timezones (unless the zone has no DST at all) -- confirm the
-    # resolved zone's offset actually varies across dates when it should,
-    # rather than being pinned to a single fixed offset.
-    d1 = datetime(2026, 1, 15, 12, 0, tzinfo=expected_tz)
-    d2 = datetime(2026, 7, 15, 12, 0, tzinfo=expected_tz)
-    # This assertion just documents the expectation that ZoneInfo is being
-    # used (a fixed-offset tzinfo would trivially satisfy dst()==dst() as
-    # both being None/zero; a real ZoneInfo correctly reports differing
-    # dst() when the zone observes DST). We only assert the function
-    # doesn't crash and returns valid output here -- the real regression
-    # guard is in how `tz` is constructed above (code review), not a
-    # runtime assertion that's fragile across arbitrary host timezones.
-    start, end = resolve_range_boundaries("last_30_days")
-    assert start <= end
-    assert start.endswith("Z")
+    zone = _local_zone()
+    assert isinstance(zone, ZoneInfo)
+
+
+def test_resolve_range_boundaries_last_30_days_crosses_dst_boundary():
+    # 2026-11-10 is CET (UTC+1) in Europe/Rome; 30 days earlier (2026-10-11)
+    # was still CEST (UTC+2) -- these differ. A fixed-offset implementation
+    # would incorrectly use +1 for both; the correct implementation must
+    # use +2 for the historical date. This is the exact bug class the
+    # Phase 1 review caught -- this test would have failed under the old
+    # fixed-offset code and must keep passing under the fix.
+    fixed_now = datetime(2026, 11, 10, 12, 0, 0, tzinfo=ZoneInfo("Europe/Rome"))
+    start, end = resolve_range_boundaries("last_30_days", local_tz="Europe/Rome", now=fixed_now)
+    assert start == "2026-10-10T22:00:00.000Z"  # local midnight Oct 11 CEST(+2) -> UTC
+    assert end == "2026-11-10T11:00:00.000Z"  # CET(+1) -> UTC

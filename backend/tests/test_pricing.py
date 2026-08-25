@@ -76,6 +76,22 @@ def test_lookup_anthropic_price_not_found_returns_none():
     assert lookup_anthropic_price(SAMPLE_CONFIG, "nonexistent_tier") is None
 
 
+def test_lookup_price_raises_on_missing_rate_key():
+    bad_config = {"providers": {"broken": {"model-x": {"input_per_million": 1.0}}}}
+    with pytest.raises(ValueError, match="output_per_million"):
+        lookup_price(bad_config, "broken", "model-x")
+
+
+def test_lookup_price_raises_on_non_numeric_rate():
+    bad_config = {
+        "providers": {
+            "broken": {"model-x": {"input_per_million": "free", "output_per_million": 0.0}}
+        }
+    }
+    with pytest.raises(ValueError, match="non-numeric"):
+        lookup_price(bad_config, "broken", "model-x")
+
+
 def test_compute_cost_basic():
     price = {"input_per_million": 3.0, "output_per_million": 15.0}
     # 1,000,000 input tokens + 1,000,000 output tokens = $3 + $15 = $18
