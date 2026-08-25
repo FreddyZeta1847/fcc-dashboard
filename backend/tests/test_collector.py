@@ -57,9 +57,9 @@ def test_response_completed_updates_existing_pending_row(conn):
         "time": "2026-07-16 13:55:52.100000+02:00",
         "request_id": "req_1",
         # Deliberately a DIFFERENT provider value than request.sent's, to
-        # confirm the completed upsert's `COALESCE(excluded.provider,
-        # provider)` never overwrites an already-known provider -- it only
-        # ever fills in a NULL. If this leaked through, the assertion below
+        # confirm the completed upsert's `COALESCE(provider,
+        # excluded.provider)` never overwrites an already-known provider --
+        # it only ever fills in a NULL. If this leaked through, the assertion below
         # would see "some_other_provider" instead of "nvidia_nim".
         "provider": "some_other_provider",
         "finish_reason": "stop",

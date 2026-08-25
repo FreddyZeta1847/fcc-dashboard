@@ -36,5 +36,8 @@ itself — see `CLAUDE.md` for the sanitization rule.
 - 2026-08-25 — cross-review: cross-feature consistency fixes (FRONTEND / DATE-TIME / PRICING-ENGINE / BACKEND)
 - 2026-08-25 — project breakdown: all 4 planned features now fully documented
 - 2026-08-25 — PHASE-0-SCAFFOLDING: implementation phase complete
-- 2026-08-25 — PHASE-1-CORE-UTILITIES: implementation phase in progress
+- 2026-08-25 — PHASE-1-CORE-UTILITIES: implementation phase complete
 - 2026-08-25 — DATE-TIME--technologies: dependency-list revision (timezone tooling gap found in review)
+- 2026-08-25 — PHASE-2-PERSISTENCE-COLLECTOR: implementation phase complete
+- 2026-08-25 — BACKEND--architecture: persistence schema revision (resilience gap found in review)
+- 2026-08-25 — BACKEND--resilience: failure-detection rule revision (same review)
