@@ -17,6 +17,8 @@ at "parse correctly, or raise clearly."
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import tzlocal
+
 
 def parse_fcc_timestamp(raw: str) -> datetime:
     """Parse FCC's log timestamp format into an aware datetime.
@@ -75,7 +77,7 @@ def resolve_range_boundaries(
 
     Raises ValueError for an unrecognized range_name.
     """
-    tz = ZoneInfo(local_tz) if local_tz is not None else datetime.now().astimezone().tzinfo
+    tz = ZoneInfo(local_tz) if local_tz is not None else ZoneInfo(tzlocal.get_localzone_name())
     current = now if now is not None else datetime.now(tz)
     if current.tzinfo is None:
         current = current.replace(tzinfo=tz)
