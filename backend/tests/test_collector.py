@@ -621,6 +621,51 @@ def test_run_collector_loop_polls_immediately_and_again_after_interval(monkeypat
     assert call_count >= 2
 
 
+def test_run_collector_loop_survives_poll_once_exception_and_logs_it(
+    monkeypatch, tmp_path, caplog
+):
+    # Finding 1 (final review): a genuine exception out of poll_once (e.g. a
+    # momentarily locked database) must not kill the loop's task -- it must
+    # be logged loudly and the loop must keep polling on the next tick,
+    # instead of collection silently and permanently stopping.
+    call_count = 0
+
+    def flaky_poll_once(conn, log_path):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise sqlite3.OperationalError("simulated locked database")
+        return 0
+
+    log_path = tmp_path / "server.log"
+    monkeypatch.setattr(collector_module, "poll_once", flaky_poll_once)
+    monkeypatch.setattr(collector_module, "get_fcc_log_path", lambda: log_path)
+
+    db = init_db(":memory:")
+
+    async def run():
+        task = asyncio.create_task(collector_module.run_collector_loop(db, interval=0.01))
+        await asyncio.sleep(0.035)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    with caplog.at_level("ERROR"):
+        asyncio.run(run())
+
+    # The loop must have survived the first call's exception and kept
+    # polling on subsequent ticks -- not died after the first call.
+    assert call_count >= 2
+
+    error_records = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(error_records) >= 1
+    # Mentions the log path being polled, and actually carries the real
+    # exception (via logging.exception's exc_info), not just a bare "it
+    # failed" message with no evidence of what failed.
+    assert any(str(log_path) in r.getMessage() for r in error_records)
+    assert any(r.exc_info is not None for r in error_records)
+
+
 def test_run_collector_loop_can_be_cancelled_cleanly(monkeypatch, tmp_path):
     monkeypatch.setattr(collector_module, "poll_once", lambda conn, log_path: 0)
     monkeypatch.setattr(collector_module, "get_fcc_log_path", lambda: tmp_path / "server.log")

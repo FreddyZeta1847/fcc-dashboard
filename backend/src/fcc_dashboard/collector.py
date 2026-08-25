@@ -480,13 +480,31 @@ async def run_collector_loop(
     established elsewhere in this codebase, just within a single module here
     since both names already live in `collector`'s own namespace.
 
-    No explicit `try/except` wraps the `poll_once` call itself: per its own
-    docstring/tests, `poll_once` already never raises on a missing file, a
-    malformed line, or a transient filesystem error -- it only ever raises
-    on a genuine database failure (e.g. a locked DB), which SHOULD abort
-    this poll loudly rather than be silently retried forever. There IS a
+    `poll_once`'s own genuine-database-failure case (e.g. a locked DB) IS
+    now caught here, by a dedicated `except Exception` below -- deliberately
+    `Exception`, not `BaseException`, so `asyncio.CancelledError` (a
+    `BaseException` subclass, not an `Exception` subclass) is never
+    touched by it and shutdown cancellation keeps working exactly as
+    described in the next paragraph. Before this, an uncaught exception
+    from `poll_once` propagated straight out of this loop's task, killing
+    collection permanently and silently -- the dashboard would just show a
+    dataset that stopped updating, indistinguishable from "no new FCC
+    traffic". Catching it here instead logs it loudly (`logging.exception`,
+    satisfying `poll_once`'s own "should surface loudly" intent, just at
+    the loop level) and falls through to the existing
+    `await asyncio.sleep(interval)`, letting the loop retry next tick --
+    a transient failure (a momentarily locked DB) self-heals instead of
+    permanently killing collection. There IS also a
     `try/except asyncio.CancelledError` around the poll below, but it exists
     to make cancellation SAFER, not to swallow it -- see the next paragraph.
+    That `except asyncio.CancelledError` branch's own `await poll_future`
+    call is deliberately NOT covered by the `except Exception` below: if the
+    shielded poll itself fails while being drained during a real shutdown
+    cancellation, that failure must propagate out of this loop's task (not
+    be swallowed and retried), so `lifespan` (api.py) still observes a
+    non-`CancelledError` exception from `await collector_task` in that
+    residual case -- see api.py's module docstring for why its shutdown
+    `finally` block is structured to still close `app.state.db` even then.
 
     The poll is deliberately not a plain `await
     run_in_threadpool(poll_once, db, log_path)`. `lifespan` (api.py) stops
@@ -532,4 +550,10 @@ async def run_collector_loop(
         except asyncio.CancelledError:
             await poll_future
             raise
+        except Exception:
+            logger.exception(
+                "Unhandled error while polling FCC log at %s; the collector "
+                "will retry on the next tick instead of stopping",
+                log_path,
+            )
         await asyncio.sleep(interval)
