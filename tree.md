@@ -1,4 +1,4 @@
-.
+﻿.
 ├── backend/
 │   ├── .pytest_cache/
 │   │   ├── v/
@@ -53,12 +53,35 @@
 │           ├── 2026-08-25-phase-1-core-utilities.md
 │           ├── 2026-08-25-phase-2-persistence-collector.md
 │           ├── 2026-08-25-phase-3-api.md
-│           └── 2026-08-25-phase-4-process-control.md
+│           ├── 2026-08-25-phase-4-process-control.md
+│           └── 2026-08-25-phase-5-frontend-scaffold-overview.md
 ├── frontend/
 │   ├── public/
 │   │   └── favicon.svg
 │   ├── src/
+│   │   ├── api/
+│   │   │   ├── client.test.ts
+│   │   │   ├── client.ts
+│   │   │   └── types.ts
 │   │   ├── assets/
+│   │   ├── components/
+│   │   │   ├── MoneySavedHeadline.test.tsx
+│   │   │   ├── MoneySavedHeadline.tsx
+│   │   │   ├── RecentRequestsFeed.test.tsx
+│   │   │   ├── RecentRequestsFeed.tsx
+│   │   │   ├── StatusPanel.test.tsx
+│   │   │   └── StatusPanel.tsx
+│   │   ├── hooks/
+│   │   │   ├── useRecentRequests.ts
+│   │   │   ├── useStats.ts
+│   │   │   └── useStatus.ts
+│   │   ├── pages/
+│   │   │   ├── Overview.test.tsx
+│   │   │   └── Overview.tsx
+│   │   ├── test/
+│   │   │   ├── setup.test.ts
+│   │   │   └── setup.ts
+│   │   ├── App.test.tsx
 │   │   ├── App.tsx
 │   │   ├── index.css
 │   │   └── main.tsx
