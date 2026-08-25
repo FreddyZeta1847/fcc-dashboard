@@ -46,7 +46,6 @@ def test_status_fcc_up_no_errors(monkeypatch):
     body = response.json()
     assert body["fcc_status"] == "up"
     assert body["providers"] == []
-    app.dependency_overrides.clear()
 
 
 def test_status_fcc_down_on_connection_error(monkeypatch):
@@ -59,7 +58,6 @@ def test_status_fcc_down_on_connection_error(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["fcc_status"] == "down"
-    app.dependency_overrides.clear()
 
 
 def test_status_reports_stale_key_and_rate_limited_providers(monkeypatch):
@@ -86,7 +84,6 @@ def test_status_reports_stale_key_and_rate_limited_providers(monkeypatch):
     by_provider = {p["provider"]: p for p in body["providers"]}
     assert by_provider["nvidia_nim"]["status"] == "stale_key"
     assert by_provider["openrouter"]["status"] == "rate_limited"
-    app.dependency_overrides.clear()
 
 
 def test_status_uses_most_recent_error_per_provider(monkeypatch):
@@ -114,4 +111,3 @@ def test_status_uses_most_recent_error_per_provider(monkeypatch):
     assert len(body["providers"]) == 1
     assert body["providers"][0]["status"] == "down"
     assert body["providers"][0]["http_status"] == 500
-    app.dependency_overrides.clear()

@@ -9,7 +9,11 @@ from fcc_dashboard.api import app, get_db, get_pricing_config_path
 from fcc_dashboard.db import init_db
 
 SAMPLE_PRICING = {
-    "anthropic": {"sonnet": {"input_per_million": 3.0, "output_per_million": 15.0}},
+    "anthropic": {
+        "opus": {"input_per_million": 15.0, "output_per_million": 75.0},
+        "sonnet": {"input_per_million": 3.0, "output_per_million": 15.0},
+        "haiku": {"input_per_million": 0.25, "output_per_million": 1.25},
+    },
     "providers": {
         "nvidia_nim": {
             "glm-4": {"input_per_million": 0.0, "output_per_million": 0.0,
@@ -98,3 +102,59 @@ def test_refresh_returns_diff_without_writing(client_and_paths, monkeypatch):
     assert isinstance(body["changes"], list)
     # nothing written -- config file on disk is unchanged
     assert json.loads(pricing_path.read_text(encoding="utf-8")) == SAMPLE_PRICING
+
+
+def test_put_pricing_rejects_missing_anthropic_tier(client_and_paths):
+    client, _pricing_path = client_and_paths
+    bad_config = {
+        "anthropic": {"sonnet": {"input_per_million": 3.0, "output_per_million": 15.0}},
+        # missing opus and haiku
+        "providers": {},
+    }
+    response = client.put("/pricing", json=bad_config)
+    assert response.status_code == 422
+
+
+def test_put_pricing_rejects_missing_providers_field(client_and_paths):
+    client, _pricing_path = client_and_paths
+    bad_config = {
+        "anthropic": {
+            "opus": {"input_per_million": 15.0, "output_per_million": 75.0},
+            "sonnet": {"input_per_million": 3.0, "output_per_million": 15.0},
+            "haiku": {"input_per_million": 0.25, "output_per_million": 1.25},
+        },
+        # missing "providers" entirely
+    }
+    response = client.put("/pricing", json=bad_config)
+    assert response.status_code == 422
+
+
+def test_get_pricing_raises_500_on_corrupt_file(client_and_paths):
+    client, pricing_path = client_and_paths
+    pricing_path.write_text("{not valid json", encoding="utf-8")
+
+    response = client.get("/pricing")
+
+    assert response.status_code == 500
+    assert "corrupt" in response.json()["detail"].lower()
+
+
+def test_refresh_raises_500_on_corrupt_file(client_and_paths, monkeypatch):
+    client, pricing_path = client_and_paths
+    pricing_path.write_text("{not valid json", encoding="utf-8")
+
+    import fcc_dashboard.routes_pricing as routes_pricing
+
+    async def fake_fetch_litellm_catalog():
+        return {}
+
+    async def fake_fetch_openrouter_models():
+        return {}
+
+    monkeypatch.setattr(routes_pricing, "_fetch_litellm_catalog", fake_fetch_litellm_catalog)
+    monkeypatch.setattr(routes_pricing, "_fetch_openrouter_models", fake_fetch_openrouter_models)
+
+    response = client.post("/pricing/refresh")
+
+    assert response.status_code == 500
+    assert "corrupt" in response.json()["detail"].lower()

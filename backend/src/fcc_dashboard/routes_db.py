@@ -111,7 +111,8 @@ def get_table_rows(
     total = db.execute(f'SELECT COUNT(*) FROM "{validated_name}"').fetchone()[0]
 
     cursor = db.execute(
-        f'SELECT * FROM "{validated_name}" LIMIT ? OFFSET ?', [limit, offset]
+        f'SELECT * FROM "{validated_name}" ORDER BY rowid LIMIT ? OFFSET ?',
+        [limit, offset],
     )
     columns = [description[0] for description in cursor.description]
     rows = [list(row) for row in cursor.fetchall()]

@@ -9,7 +9,11 @@ from fcc_dashboard.api import app, get_db, get_pricing_config_path
 from fcc_dashboard.db import init_db
 
 SAMPLE_PRICING = {
-    "anthropic": {"sonnet": {"input_per_million": 3.0, "output_per_million": 15.0}},
+    "anthropic": {
+        "opus": {"input_per_million": 15.0, "output_per_million": 75.0},
+        "sonnet": {"input_per_million": 3.0, "output_per_million": 15.0},
+        "haiku": {"input_per_million": 0.25, "output_per_million": 1.25},
+    },
     "providers": {
         "nvidia_nim": {
             "glm-4": {"input_per_million": 0.0, "output_per_million": 0.0,
@@ -124,4 +128,23 @@ def test_stats_no_pricing_file_returns_null_total_savings(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["total_savings"] is None
-    app.dependency_overrides.clear()
+
+
+def test_stats_corrupt_pricing_file_returns_null_total_savings(tmp_path):
+    test_db = init_db(":memory:")
+    corrupt_path = tmp_path / "corrupt.json"
+    corrupt_path.write_text("{not valid json", encoding="utf-8")
+    app.dependency_overrides[get_db] = lambda: test_db
+    app.dependency_overrides[get_pricing_config_path] = lambda: corrupt_path
+    client = TestClient(app)
+
+    _insert_completed(test_db, "req_1", "nvidia_nim", "sonnet", "glm-4",
+                       100, 50, "2026-08-24T10:00:00.000Z")
+    test_db.commit()
+
+    response = client.get("/stats?range=last_7_days")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_savings"] is None
+    assert body["unpriced_request_count"] == 1

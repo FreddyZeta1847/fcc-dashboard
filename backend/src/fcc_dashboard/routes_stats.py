@@ -39,6 +39,7 @@ This route never creates the pricing file -- it's read-only; Task 4's
 `PUT /pricing` owns writing it.
 """
 
+import json
 import sqlite3
 from enum import Enum
 from pathlib import Path
@@ -202,11 +203,13 @@ def get_stats(
 
     try:
         pricing_config = load_pricing_config(pricing_config_path)
-    except FileNotFoundError:
-        # No pricing config has ever been written. This is "we have never
-        # priced anything, ever" -- a null total_savings, not a 0.0 one --
+    except (FileNotFoundError, json.JSONDecodeError):
+        # No pricing config has ever been written, or the file that exists
+        # is corrupt (invalid JSON, e.g. a broken hand-edit). Both cases
+        # are functionally the same for this read-only endpoint: "we have
+        # no usable pricing data" -- a null total_savings, not a 0.0 one --
         # and every completed row is unpriced by definition. This endpoint
-        # is read-only: it never creates the pricing file itself.
+        # is read-only: it never creates or repairs the pricing file itself.
         return StatsResponse(
             range=range_name.value,
             range_start=start,

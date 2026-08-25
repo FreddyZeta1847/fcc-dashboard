@@ -36,16 +36,18 @@ than reporting `not_found` and letting a human confirm it manually. See
 exact rules.
 """
 
+import copy
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from .dependencies import get_db, get_pricing_config_path  # noqa: F401 (get_db kept for dependency-pattern consistency)
-from .pricing import load_pricing_config
+from .pricing import _validate_price_entry, load_pricing_config
 
 router = APIRouter()
 
@@ -69,25 +71,57 @@ SEEDED_DEFAULT_PRICING: dict[str, Any] = {
 class PricingConfig(BaseModel):
     """The full pricing config document -- PRICING-ENGINE's schema.
 
-    Deliberately loose beyond the one contractual check the brief asks for
-    (`anthropic` present and itself a dict): `pricing.py`'s
-    `lookup_price`/`lookup_anthropic_price` already validate individual
-    price entries defensively wherever they're actually used, so this
-    model doesn't duplicate that. `model_config = ConfigDict(extra="allow")`
-    plus a permissive `providers` type means a well-formed document round-
-    trips through this model unchanged -- this route is a pass-through
-    writer, not a schema owner.
+    Beyond "well-formed JSON object", this model enforces the one thing
+    `GET /stats` genuinely depends on at read time: all three Anthropic
+    tiers (`opus`, `sonnet`, `haiku`) must be present under `anthropic`,
+    each with a valid `{input_per_million, output_per_million}` shape --
+    reusing `pricing.py`'s own `_validate_price_entry` rather than
+    duplicating its rules. Without this, an incomplete `PUT /pricing` body
+    (e.g. `{"anthropic": {}, "providers": {}}`) would pass validation here
+    and only blow up later, as an uncaught `ValueError` out of
+    `compute_savings`, when `GET /stats` tries to price a row against a
+    tier that was never configured -- a write-time mistake surfacing as a
+    500 at read time instead of a 422 at write time.
+
+    `providers` has no default: `PUT /pricing` replaces the whole file, so
+    a body that simply omits `"providers"` must be rejected (422), not
+    silently treated as "no providers" and used to wipe every existing
+    provider price on disk.
+
+    `model_config = ConfigDict(extra="allow")` plus a permissive
+    `providers` value type means a well-formed document still round-trips
+    through this model unchanged -- this route validates the two
+    contractual pieces above, but is not a schema owner for the rest of
+    the document (e.g. individual provider price entries aren't validated
+    here; `pricing.py`'s lookup functions still validate those defensively
+    wherever they're actually used).
     """
 
     model_config = ConfigDict(extra="allow")
 
     anthropic: dict[str, Any]
-    providers: dict[str, Any] = Field(default_factory=dict)
+    providers: dict[str, Any]
 
     @model_validator(mode="after")
-    def _anthropic_is_a_dict(self) -> "PricingConfig":
+    def _anthropic_has_all_required_tiers(self) -> "PricingConfig":
         if not isinstance(self.anthropic, dict):
             raise ValueError("'anthropic' must be an object")
+
+        for tier in ("opus", "sonnet", "haiku"):
+            entry = self.anthropic.get(tier)
+            if entry is None:
+                raise ValueError(
+                    f"'anthropic' is missing required tier {tier!r}"
+                )
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"'anthropic' tier {tier!r} must be an object"
+                )
+            try:
+                _validate_price_entry(entry, context=f"anthropic tier {tier!r}")
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+
         return self
 
 
@@ -328,11 +362,29 @@ def _build_diff(
 
 
 def _write_pricing_config(path: Path, config: dict) -> None:
+    """Write `config` to `path` atomically.
+
+    Writes to a sibling temp file first, then `os.replace`s it into place.
+    `os.replace` is atomic on both POSIX and Windows (unlike `shutil.move`,
+    which can do a non-atomic copy+delete across filesystems) -- this file
+    is the one thing the entire pricing subsystem depends on, so a crash
+    mid-write must never leave it truncated or corrupt. If the write itself
+    fails partway, the temp file is removed (if it still exists) before the
+    original exception is re-raised, so a failed write never leaves a stray
+    `.tmp` file behind.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        os.replace(tmp_path, path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
 
 
-@router.get("/pricing")
+@router.get("/pricing", response_model=PricingConfig)
 def get_pricing(
     pricing_config_path: Path = Depends(get_pricing_config_path),
 ) -> dict:
@@ -341,14 +393,25 @@ def get_pricing(
     missing file isn't an error, it's "no one has configured pricing yet",
     and the honest fix is to create it with the known-correct Anthropic
     defaults rather than returning an empty/null response.
+
+    A corrupt (invalid-JSON) file is a different case from a missing one --
+    someone hand-edited the file and broke it. Rather than let FastAPI
+    surface a bare, undiagnosable 500, this raises a 500 with a detail
+    message naming the file and the parse error, so it's actually fixable.
     """
     if not pricing_config_path.exists():
         _write_pricing_config(pricing_config_path, SEEDED_DEFAULT_PRICING)
-        return SEEDED_DEFAULT_PRICING
-    return load_pricing_config(pricing_config_path)
+        return copy.deepcopy(SEEDED_DEFAULT_PRICING)
+    try:
+        return load_pricing_config(pricing_config_path)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Pricing config file at {pricing_config_path} is corrupt: {exc}",
+        ) from exc
 
 
-@router.put("/pricing")
+@router.put("/pricing", response_model=PricingConfig)
 def put_pricing(
     config: PricingConfig,
     pricing_config_path: Path = Depends(get_pricing_config_path),
@@ -357,9 +420,9 @@ def put_pricing(
 
     `PricingConfig` (a Pydantic model) is the validation gate: FastAPI
     returns 422 automatically if the body isn't a JSON object, is missing
-    `anthropic`, or `anthropic` isn't itself an object -- exactly the
-    contract's "reject with 422" rule, and nothing more, per the brief
-    ("don't need deep validation of every price entry's shape here").
+    `anthropic` or `providers`, `anthropic` isn't itself an object, or any
+    of the three required Anthropic tiers is missing/malformed -- see
+    `PricingConfig`'s own docstring for why that check exists.
     """
     written = config.model_dump()
     _write_pricing_config(pricing_config_path, written)
@@ -375,11 +438,21 @@ async def refresh_pricing(
     is treated the same as an empty one (no providers configured yet, only
     the three Anthropic tiers) rather than a 404/500 -- a refresh before
     the file has ever been created is a reasonable first action.
+
+    A corrupt (invalid-JSON) file is different: that's not "nothing
+    configured yet", it's a broken hand-edit, so it's reported as a
+    diagnosable 500 rather than silently treated as empty or left to
+    surface as an opaque unhandled exception.
     """
     try:
         config = load_pricing_config(pricing_config_path)
     except FileNotFoundError:
         config = {"anthropic": {}, "providers": {}}
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Pricing config file at {pricing_config_path} is corrupt: {exc}",
+        ) from exc
 
     litellm_catalog = await _fetch_litellm_catalog()
     openrouter_models = await _fetch_openrouter_models()
