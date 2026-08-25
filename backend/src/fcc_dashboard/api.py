@@ -39,7 +39,28 @@ Phase 3's later tasks and Phase 4/5 all build on). Owns two things:
   `app.state.db` -- in that order, deliberately: the loop shares that same
   connection, so closing the DB first could let an in-flight
   `poll_once` call hit a closed-connection error instead of just being
-  cleanly cancelled.
+  cleanly cancelled. `app.state.db.close()` itself lives in a nested
+  `finally` so it always runs even if `await collector_task` raises
+  something other than `CancelledError` (a residual failure surfacing from
+  the drain described just below) -- see the local issue file
+  `.claude/issues/001-collector-loop-shutdown-race-crashed-sqlite.md`'s
+  fix for why an earlier version of this ordering alone wasn't enough to
+  guarantee the connection always gets closed.
+  The simple `task.cancel(); await task` pattern used above is only safe
+  here because `collector.run_collector_loop` shields its in-flight
+  `poll_once` call with `asyncio.shield` and explicitly drains it to real
+  completion on cancellation before re-raising (see that function's own
+  docstring for the full mechanism) -- a plain unshielded task would let
+  `await collector_task` return while the poll's worker thread was still
+  writing to `app.state.db` on another thread, racing the `close()` call
+  right after it. Removing that shielding (e.g. "simplifying" it later, an
+  option the issue file's own "Watch item" section floats under different
+  conditions) reintroduces a real, reproducible native SQLite access
+  violation on shutdown -- see
+  `~/.claude/issues/011-asyncio-create-task-cancel-abandons-run-in-threadpool.md`
+  for why. This drain is bounded at roughly 30 seconds worst case (the time
+  a single large catch-up poll can take), which is why shutdown can
+  occasionally take that long -- that's a bounded wait, not a hang.
 - The dependency-provider functions routes use (`Depends(get_db)`, etc.)
   to reach shared resources without touching `app.state` directly. These
   actually live in `dependencies.py` -- a leaf module with no import from
@@ -141,7 +162,9 @@ async def lifespan(app: FastAPI):
     """Open the on-disk DB on startup, start the background collector loop,
     then reverse both cleanly on shutdown -- see the module docstring's
     `lifespan` section for why the collector task is cancelled before
-    `app.state.db.close()`, not after.
+    `app.state.db.close()`, not after, and why `close()` itself sits in a
+    nested `finally` so it still runs even if the collector task ends with
+    a non-`CancelledError` exception during shutdown.
     """
     db_path = _resolve_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -152,9 +175,11 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         collector_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await collector_task
-        app.state.db.close()
+        try:
+            with contextlib.suppress(asyncio.CancelledError):
+                await collector_task
+        finally:
+            app.state.db.close()
 
 
 app = FastAPI(title="FCC Dashboard API", lifespan=lifespan)

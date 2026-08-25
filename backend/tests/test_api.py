@@ -15,10 +15,19 @@ instantiating `TestClient(app)` directly.
 import asyncio
 import sqlite3
 
+import pytest
 from fastapi.testclient import TestClient
 
 from fcc_dashboard.api import app
 from fcc_dashboard.db import init_db
+
+
+class _SimulatedShutdownDrainFailure(RuntimeError):
+    """Stand-in for Finding 2's residual case: the collector's shielded
+    in-flight poll itself fails while being drained during shutdown, so
+    `run_collector_loop`'s own `except asyncio.CancelledError: await
+    poll_future` line re-raises the poll's exception instead of
+    `CancelledError`."""
 
 
 def test_lifespan_starts_real_db_and_serves_requests(tmp_path, monkeypatch):
@@ -129,6 +138,43 @@ def test_lifespan_starts_and_cancels_the_collector_loop(monkeypatch, tmp_path):
     # run -- the loop must have been cancelled, not left dangling.
     assert "cancelled" in calls
     assert len(calls) >= 2  # proves the fake loop actually ran at least once before cancellation
+
+
+def test_lifespan_closes_db_even_when_collector_task_fails_during_shutdown_drain(
+    monkeypatch, tmp_path
+):
+    # Finding 2 (final review): if the collector task ends with a
+    # non-CancelledError exception during shutdown (the residual case
+    # documented in collector.run_collector_loop's docstring -- the
+    # shielded in-flight poll itself fails while being drained), that
+    # exception must not skip `app.state.db.close()`. Otherwise the SQLite
+    # connection (and its WAL/SHM files) leak.
+    async def fake_run_collector_loop_that_fails_on_drain(db, interval=5.0):
+        try:
+            while True:
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            raise _SimulatedShutdownDrainFailure(
+                "simulated poll failure during shutdown drain"
+            )
+
+    import fcc_dashboard.api as api
+
+    monkeypatch.setattr(
+        api.collector, "run_collector_loop", fake_run_collector_loop_that_fails_on_drain
+    )
+    monkeypatch.setenv("FCC_DASHBOARD_DB_PATH", str(tmp_path / "test.db"))
+
+    with pytest.raises(_SimulatedShutdownDrainFailure):
+        with TestClient(app) as client:
+            response = client.get("/status")
+            assert response.status_code == 200
+
+    # The DB connection must have been closed despite the propagating
+    # exception -- attempting to use it now must fail as "closed", not
+    # succeed (which would mean it leaked open).
+    with pytest.raises(sqlite3.ProgrammingError):
+        app.state.db.execute("SELECT 1")
 
 
 def test_openapi_route_set_is_complete():
