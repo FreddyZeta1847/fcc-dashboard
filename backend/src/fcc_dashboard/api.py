@@ -15,14 +15,15 @@ Phase 3's later tasks and Phase 4/5 all build on). Owns two things:
   actually live in `dependencies.py` -- a leaf module with no import from
   this file, so route modules can import them without risking a circular
   import against `api.py`. This module re-exports them (`get_db`,
-  `get_pricing_config_path`) so `from fcc_dashboard.api import app, get_db`
-  -- what every existing test does -- keeps working unchanged: it's the
-  same function object either way, so `app.dependency_overrides[get_db]`
-  matches regardless of which module a caller imported `get_db` from.
+  `get_pricing_config_path`, `get_fcc_log_path`) so `from fcc_dashboard.api
+  import app, get_db` -- what every existing test does -- keeps working
+  unchanged: it's the same function object either way, so
+  `app.dependency_overrides[get_db]` matches regardless of which module a
+  caller imported `get_db` from.
 
 Routers (one per feature area -- `routes_status`, `routes_requests`,
-`routes_stats`, `routes_pricing`, `routes_db` here) are imported and included
-normally, at the top of this file, since
+`routes_stats`, `routes_pricing`, `routes_db`, `routes_control` here) are
+imported and included normally, at the top of this file, since
 `dependencies.py` being import-order-independent means there's no longer a
 reason to delay it.
 """
@@ -33,9 +34,20 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from . import routes_db, routes_pricing, routes_requests, routes_stats, routes_status
+from . import (
+    routes_control,
+    routes_db,
+    routes_pricing,
+    routes_requests,
+    routes_stats,
+    routes_status,
+)
 from .db import init_db
-from .dependencies import get_db, get_pricing_config_path  # noqa: F401 (re-exported)
+from .dependencies import (  # noqa: F401 (re-exported)
+    get_db,
+    get_fcc_log_path,
+    get_pricing_config_path,
+)
 
 DEFAULT_DB_PATH = Path.home() / ".fcc-dashboard" / "fcc_dashboard.db"
 
@@ -78,3 +90,4 @@ app.include_router(routes_requests.router)
 app.include_router(routes_stats.router)
 app.include_router(routes_pricing.router)
 app.include_router(routes_db.router)
+app.include_router(routes_control.router)

@@ -41,4 +41,5 @@ def test_openapi_route_set_is_complete():
         "/pricing/refresh",
         "/db/tables",
         "/db/tables/{name}",
+        "/control/start",
     }

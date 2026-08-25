@@ -27,6 +27,7 @@ from pathlib import Path
 from fastapi import Request
 
 DEFAULT_PRICING_CONFIG_PATH = Path.home() / ".fcc-dashboard" / "pricing.json"
+DEFAULT_FCC_LOG_PATH = Path.home() / ".fcc" / "logs" / "server.log"
 
 
 def get_db(request: Request) -> sqlite3.Connection:
@@ -54,3 +55,19 @@ def get_pricing_config_path() -> Path:
     """
     override = os.environ.get("FCC_DASHBOARD_PRICING_PATH")
     return Path(override) if override else DEFAULT_PRICING_CONFIG_PATH
+
+
+def get_fcc_log_path() -> Path:
+    """Dependency: where FCC's own gateway log file lives on disk.
+
+    Used by `routes_control.py` (Task 2) to flush the collector
+    (`poll_once`) before acting on a start/stop request. Same override
+    pattern as `get_pricing_config_path`: checks the `FCC_LOG_PATH`
+    environment variable first, so a test can point this at a `tmp_path`
+    fixture file instead of touching the real user's
+    `~/.fcc/logs/server.log`. Falls back to `DEFAULT_FCC_LOG_PATH` when
+    the variable isn't set. Resolved at call time, not import time, for
+    the same reason `_resolve_db_path` and `get_pricing_config_path` are.
+    """
+    override = os.environ.get("FCC_LOG_PATH")
+    return Path(override) if override else DEFAULT_FCC_LOG_PATH
