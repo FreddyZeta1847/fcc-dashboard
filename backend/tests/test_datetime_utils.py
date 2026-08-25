@@ -82,7 +82,7 @@ def test_resolve_range_boundaries_last_7_days():
 def test_resolve_range_boundaries_last_30_days():
     fixed_now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=ZoneInfo("Europe/Rome"))
     start, end = resolve_range_boundaries("last_30_days", local_tz="Europe/Rome", now=fixed_now)
-    assert start == "2026-07-25T22:00:00.000Z"
+    assert start == "2026-07-24T22:00:00.000Z"
     assert end == "2026-08-24T10:00:00.000Z"
 
 
