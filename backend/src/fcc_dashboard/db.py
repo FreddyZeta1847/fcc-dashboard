@@ -10,7 +10,11 @@ Owns the two tables the backend persists to disk, per BACKEND--architecture:
 - `collector_state` — a single-row table (id is CHECK'd to always be 1) that
   tracks the collector's tail position across restarts: how far into the log
   file it has read (`last_offset`), the file size at that point (used to
-  detect truncation/rotation), and when it last ran.
+  detect truncation/rotation), the file's modification time at that point
+  (a secondary truncation signal for the rare case where a rotated file
+  happens to land on the exact same size as before -- size alone can't
+  tell "nothing changed" apart from "replaced with same-size content"),
+  and when it last ran.
 
 `init_db(path)` is the only entry point. It is idempotent: safe to call on
 every backend startup, whether `path` is a real file (persistent state) or
@@ -48,13 +52,15 @@ CREATE TABLE IF NOT EXISTS collector_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     last_offset INTEGER NOT NULL DEFAULT 0,
     last_known_file_size INTEGER NOT NULL DEFAULT 0,
+    last_known_mtime_ns INTEGER NOT NULL DEFAULT 0,
     last_run_at TEXT
 )
 """
 
 _ENSURE_COLLECTOR_STATE_ROW = """
-INSERT OR IGNORE INTO collector_state (id, last_offset, last_known_file_size, last_run_at)
-VALUES (1, 0, 0, NULL)
+INSERT OR IGNORE INTO collector_state
+    (id, last_offset, last_known_file_size, last_known_mtime_ns, last_run_at)
+VALUES (1, 0, 0, 0, NULL)
 """
 
 
