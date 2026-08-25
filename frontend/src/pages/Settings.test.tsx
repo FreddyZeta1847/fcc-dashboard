@@ -1,10 +1,10 @@
 /*
  * Settings.test.tsx
- * Behavioral spec for the Settings page: proves PricingEditor,
- * PriceRefreshFlow, and ProcessControls all mount together and each
- * render their own key content, routed by URL through a single mocked
- * `fetch` (same pattern as Overview.test.tsx). Written before Settings.tsx
- * (TDD).
+ * Behavioral spec for the Settings page: proves PricingEditor and
+ * PriceRefreshFlow mount together and each render their own key content,
+ * routed by URL through a single mocked `fetch` (same pattern as
+ * Overview.test.tsx). FCC process control lives only in the sidebar now
+ * (Sidebar.test.tsx), not on this page.
  */
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -27,7 +27,7 @@ const pricingConfig = {
 }
 
 describe('Settings', () => {
-  it('renders the pricing editor, the refresh flow, and the process controls together', async () => {
+  it('renders the pricing editor and the refresh flow together', async () => {
     vi.spyOn(global, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.startsWith('/pricing/refresh')) {
@@ -41,9 +41,6 @@ describe('Settings', () => {
         }
         return Promise.resolve(new Response(JSON.stringify(pricingConfig), { status: 200 }))
       }
-      if (url.startsWith('/control/')) {
-        return Promise.resolve(new Response(JSON.stringify({ action: 'started', pid: 1 }), { status: 200 }))
-      }
       return Promise.reject(new Error(`unexpected fetch: ${url}`))
     })
 
@@ -56,7 +53,5 @@ describe('Settings', () => {
 
     await waitFor(() => expect(screen.getByText('deepseek-chat')).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /refresh prices/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^start/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^stop/i })).toBeInTheDocument()
   })
 })
