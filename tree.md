@@ -30,7 +30,6 @@
 │   │   └── main.tsx
 │   ├── .gitignore
 │   ├── .oxlintrc.json
-│   ├── CUsersFedeAppDataLocalTempclaudeC--Users-Fede-Desktop-Projects-fcc-dashboard4a983a20-3e36-4b58-b08d-03358f08124dscratchpaddev-server.log
 │   ├── index.html
 │   ├── package-lock.json
 │   ├── package.json
