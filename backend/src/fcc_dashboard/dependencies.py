@@ -20,6 +20,7 @@ object, so `app.dependency_overrides[get_db] = ...` still matches whether
 callers import `get_db` from `api` or from here.
 """
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -41,12 +42,15 @@ def get_db(request: Request) -> sqlite3.Connection:
 def get_pricing_config_path() -> Path:
     """Dependency: where the pricing config JSON lives on disk.
 
-    Stub for Task 3, which will read pricing data through this. Returns
-    the default `~/.fcc-dashboard/pricing.json` path for now. Task 3
-    should follow the same env-var-override convention `api._resolve_db_path`
-    established for the DB path (e.g. an `FCC_DASHBOARD_PRICING_PATH`
-    override), so tests can point this at a fixture file without touching
-    the real user's home directory -- see `api.py`'s `_resolve_db_path` for
-    the pattern to copy.
+    Used by `routes_stats.py` (Task 3, read-only) and `routes_pricing.py`
+    (Task 4, read/write). Checks the `FCC_DASHBOARD_PRICING_PATH`
+    environment variable first, mirroring `api._resolve_db_path`'s
+    override seam for the DB path -- so a test can point this at a fixture
+    file (or a `tmp_path` file that deliberately doesn't exist, to exercise
+    the "no pricing config yet" case) instead of touching the real user's
+    `~/.fcc-dashboard/pricing.json`. Falls back to
+    `DEFAULT_PRICING_CONFIG_PATH` when the variable isn't set. Resolved at
+    call time (not import time) for the same reason `_resolve_db_path` is.
     """
-    return DEFAULT_PRICING_CONFIG_PATH
+    override = os.environ.get("FCC_DASHBOARD_PRICING_PATH")
+    return Path(override) if override else DEFAULT_PRICING_CONFIG_PATH
