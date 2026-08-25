@@ -6,44 +6,63 @@ Defines the `app` object every route module attaches to and every test's
 Phase 3's later tasks and Phase 4/5 all build on). Owns two things:
 
 - The `lifespan` context manager: on startup it opens the real on-disk
-  SQLite database (via `init_db`, Phase 2) at
-  `~/.fcc-dashboard/fcc_dashboard.db` -- creating the parent directory if
-  it doesn't exist yet -- and stores the connection on `app.state.db`. On
-  shutdown it closes that connection.
-- The `get_db` dependency: routes depend on this (`Depends(get_db)`) to
-  reach the DB connection rather than touching `app.state` directly. In
-  production it just returns `request.app.state.db` (set by `lifespan`
-  above). In tests it is never actually called -- tests replace it
-  wholesale with `app.dependency_overrides[get_db] = lambda: test_db`, so
-  each test gets its own isolated `:memory:` connection without the app
-  ever starting up for real. This is the dependency-injection pattern
-  every later task's routes (and their tests) should reuse rather than
-  inventing a new one.
+  SQLite database (via `init_db`, Phase 2) at the path resolved by
+  `_resolve_db_path()` (normally `~/.fcc-dashboard/fcc_dashboard.db`,
+  creating the parent directory if it doesn't exist yet) and stores the
+  connection on `app.state.db`. On shutdown it closes that connection.
+- The dependency-provider functions routes use (`Depends(get_db)`, etc.)
+  to reach shared resources without touching `app.state` directly. These
+  actually live in `dependencies.py` -- a leaf module with no import from
+  this file, so route modules can import them without risking a circular
+  import against `api.py`. This module re-exports them (`get_db`,
+  `get_pricing_config_path`) so `from fcc_dashboard.api import app, get_db`
+  -- what every existing test does -- keeps working unchanged: it's the
+  same function object either way, so `app.dependency_overrides[get_db]`
+  matches regardless of which module a caller imported `get_db` from.
 
 Routers (one per feature area -- `routes_status` here, more added by later
-tasks) are included at the *bottom* of this file, after `get_db` is
-defined, and imported there rather than at the top. This is deliberate:
-`routes_status.py` imports `get_db` from this module to use as a route
-dependency, so if this module imported `routes_status` before `get_db`
-existed, the two modules would deadlock on each other (a circular import).
-Defining `get_db` first and only then importing the router sidesteps that.
+tasks) are imported and included normally, at the top of this file, since
+`dependencies.py` being import-order-independent means there's no longer a
+reason to delay it.
 """
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 
+from . import routes_status
 from .db import init_db
+from .dependencies import get_db, get_pricing_config_path  # noqa: F401 (re-exported)
 
 DEFAULT_DB_PATH = Path.home() / ".fcc-dashboard" / "fcc_dashboard.db"
+
+
+def _resolve_db_path() -> Path:
+    """Resolve the DB path at call time, not import time.
+
+    Checks the `FCC_DASHBOARD_DB_PATH` environment variable first. This
+    seam exists so a test that uses `with TestClient(app) as client:` (the
+    idiomatic FastAPI form, which actually runs `lifespan`) can point the
+    app at a throwaway file instead of silently creating
+    `~/.fcc-dashboard/fcc_dashboard.db` on whoever's machine runs the
+    tests. No current test exercises the `lifespan` path at all, but the
+    seam is here so the next one that does can use it without editing this
+    file. `get_pricing_config_path` in `dependencies.py` (Task 3) should
+    follow this same env-var-override pattern for its own default path
+    (e.g. `FCC_DASHBOARD_PRICING_PATH`) for the same reason.
+    """
+    override = os.environ.get("FCC_DASHBOARD_DB_PATH")
+    return Path(override) if override else DEFAULT_DB_PATH
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Open the on-disk DB on startup; close it on shutdown."""
-    DEFAULT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    app.state.db = init_db(DEFAULT_DB_PATH)
+    db_path = _resolve_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    app.state.db = init_db(db_path)
     try:
         yield
     finally:
@@ -52,20 +71,4 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="FCC Dashboard API", lifespan=lifespan)
 
-
-def get_db(request: Request):
-    """Dependency: the app's SQLite connection.
-
-    Reads `request.app.state.db`, populated by `lifespan` on startup for
-    real usage. Tests bypass this body entirely via
-    `app.dependency_overrides[get_db] = lambda: test_db`.
-    """
-    return request.app.state.db
-
-
-# Imported here, not at module top -- see the module docstring for why
-# (avoids a circular import with routes_status.py, which needs `get_db`
-# above to already exist on this module).
-from .routes_status import router as status_router  # noqa: E402
-
-app.include_router(status_router)
+app.include_router(routes_status.router)

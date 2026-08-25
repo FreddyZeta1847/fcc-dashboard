@@ -17,8 +17,10 @@ degrade gracefully rather than 500:
 
 2. `providers`: per distinct provider, the status implied by its most
    recent `error`-status row in `requests`. This is a DB read, so it goes
-   through the `get_db` dependency from `api.py` like every other route in
-   this app will.
+   through the `get_db` dependency from `dependencies.py` like every other
+   route in this app will. Imported from `dependencies.py`, not `api.py`,
+   so this module never depends on `api.py` at all -- see
+   `dependencies.py`'s docstring for why that matters.
 
 Status classification is the project-wide locked rule (see
 BACKEND--architecture / phase-3-api plan): `http_status` 401/403 ->
@@ -27,14 +29,22 @@ BACKEND--architecture / phase-3-api plan): `http_status` 401/403 ->
 status off of) -> "down". Anything else -> "ok" (reachable in principle,
 though in practice every provider this endpoint reports on has *some*
 error row, since providers with none aren't listed at all).
+
+The response shape is enforced with Pydantic models (`ProviderStatus`,
+`StatusResponse`) rather than returned as a bare dict, so FastAPI's
+generated OpenAPI schema documents the real shape and `Literal` closes the
+status vocabulary at the response boundary. This is meant to set the
+convention for this phase's other routes, not just this one.
 """
 
 import sqlite3
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
-from .api import get_db
+from .dependencies import get_db
 
 router = APIRouter()
 
@@ -43,6 +53,18 @@ FCC_HEALTH_TIMEOUT = 2.0
 
 _STALE_KEY_HTTP_STATUSES = {401, 403}
 _RATE_LIMITED_HTTP_STATUSES = {429}
+
+
+class ProviderStatus(BaseModel):
+    provider: str
+    status: Literal["ok", "stale_key", "rate_limited", "down"]
+    last_error_at: str | None
+    http_status: int | None
+
+
+class StatusResponse(BaseModel):
+    fcc_status: Literal["up", "down"]
+    providers: list[ProviderStatus]
 
 
 async def _check_fcc_health() -> httpx.Response:
@@ -65,50 +87,55 @@ def _classify_provider_status(http_status: int | None) -> str:
     return "ok"
 
 
-def _latest_error_per_provider(db: sqlite3.Connection) -> list[dict]:
+def _latest_error_per_provider(db: sqlite3.Connection) -> list[ProviderStatus]:
     """One entry per distinct provider with at least one `error` row, using
-    that provider's most recent (`MAX(occurred_at)`) error row to classify
-    its current status. Providers with zero error rows are omitted
-    entirely. Safe against an empty `requests` table (returns `[]`).
+    that provider's most recent `error` row to classify its current
+    status. Providers with zero error rows are omitted entirely. Safe
+    against an empty `requests` table (returns `[]`).
+
+    Uses `ROW_NUMBER() OVER (PARTITION BY provider ORDER BY occurred_at
+    DESC, rowid DESC)` rather than a `MAX(occurred_at)` self-join, so ties
+    (two error rows for the same provider sharing an identical
+    `occurred_at` timestamp) resolve deterministically to the
+    higher-`rowid` row -- SQLite's own insertion-order tiebreaker -- instead
+    of an arbitrary row, which a bare `GROUP BY` would allow.
     """
     rows = db.execute(
         """
-        SELECT r.provider, r.http_status, r.occurred_at
-        FROM requests r
-        INNER JOIN (
-            SELECT provider, MAX(occurred_at) AS latest_occurred_at
+        SELECT provider, http_status, occurred_at FROM (
+            SELECT provider, http_status, occurred_at,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY provider
+                       ORDER BY occurred_at DESC, rowid DESC
+                   ) AS rn
             FROM requests
             WHERE status = 'error' AND provider IS NOT NULL
-            GROUP BY provider
-        ) latest
-            ON r.provider = latest.provider
-            AND r.occurred_at = latest.latest_occurred_at
-        WHERE r.status = 'error'
-        GROUP BY r.provider
-        ORDER BY r.provider
+        )
+        WHERE rn = 1
+        ORDER BY provider
         """
     ).fetchall()
 
     return [
-        {
-            "provider": row["provider"],
-            "status": _classify_provider_status(row["http_status"]),
-            "last_error_at": row["occurred_at"],
-            "http_status": row["http_status"],
-        }
+        ProviderStatus(
+            provider=row["provider"],
+            status=_classify_provider_status(row["http_status"]),
+            last_error_at=row["occurred_at"],
+            http_status=row["http_status"],
+        )
         for row in rows
     ]
 
 
-@router.get("/status")
-async def get_status(db: sqlite3.Connection = Depends(get_db)):
+@router.get("/status", response_model=StatusResponse)
+async def get_status(db: sqlite3.Connection = Depends(get_db)) -> StatusResponse:
     try:
         health_response = await _check_fcc_health()
         fcc_status = "up" if health_response.status_code == 200 else "down"
     except httpx.HTTPError:
         fcc_status = "down"
 
-    return {
-        "fcc_status": fcc_status,
-        "providers": _latest_error_per_provider(db),
-    }
+    return StatusResponse(
+        fcc_status=fcc_status,
+        providers=_latest_error_per_provider(db),
+    )
