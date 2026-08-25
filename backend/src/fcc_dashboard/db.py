@@ -1,7 +1,7 @@
 """
 SQLite schema and connection helper for FCC Dashboard.
 
-Owns the two tables the backend persists to disk, per BACKEND--architecture:
+Owns the three tables the backend persists to disk, per BACKEND--architecture:
 
 - `requests` — one row per gateway request, keyed by `request_id`. Written by
   the collector (Task 3) as it tails the FCC log, and read by Phase 3's API.

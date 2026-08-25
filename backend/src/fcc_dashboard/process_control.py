@@ -33,6 +33,20 @@ installed on the machine running the tests. Splitting the argument list out
 means the tests exercise the exact same detachment flags/behavior that
 `launch_detached` uses in production, instead of a second implementation
 that could quietly drift from it.
+
+Platform tradeoff worth knowing about, not a bug: on Windows, `terminate()`
+and `kill()` end up being effectively the same operation. Windows has no
+real equivalent of POSIX's `SIGTERM` that an arbitrary unrelated process can
+send and the target can choose to catch and act on gracefully -- the closest
+analogue, `CTRL_BREAK_EVENT`, only works on a process that shares a console
+with the sender, and `_launch_detached_args` deliberately gives the child no
+console at all (`DETACHED_PROCESS`) so it survives independently of ours.
+So on Windows, stopping `fcc-server` through this module is always a hard
+stop -- it gets no chance to flush state or shut down cleanly. True
+detachment and a deliverable graceful-shutdown signal are mutually
+exclusive on Windows; POSIX doesn't have this problem, since `SIGTERM`
+reaches a detached process fine and `terminate_process` gives it up to
+`timeout` seconds to act on it before escalating to `SIGKILL`.
 """
 
 import shutil
@@ -117,9 +131,22 @@ def is_process_alive(pid: int) -> bool:
     Advisory only -- see this module's docstring for the PID-reuse caveat.
     Never raises: an invalid, negative, or nonexistent PID simply yields
     `False`.
+
+    Also treats a POSIX zombie as "not alive". `_launch_detached_args`
+    never calls `Popen.wait()` on the child it launches -- that's
+    intentional, since the whole point is a detached process we don't
+    babysit -- but on POSIX that means a child that has already exited
+    stays in the process table as a zombie (status `Z`) until something
+    else reaps it, and `psutil.Process.is_running()` alone still reports a
+    zombie as running. Without this check, a crashed `fcc-server` could
+    look "alive" on Linux/macOS indefinitely. `psutil.STATUS_ZOMBIE` exists
+    as a constant on every platform (it's simply a status Windows never
+    reports), so this check is a no-op on Windows and a real correctness
+    fix on POSIX.
     """
     try:
-        return psutil.Process(pid).is_running()
+        process = psutil.Process(pid)
+        return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
     except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
         return False
 
@@ -142,12 +169,33 @@ def terminate_process(pid: int, timeout: float = 5.0) -> bool:
     given the force-kill fallback, but the contract allows for a `False`
     return here rather than raising, since an OS-level termination failure
     shouldn't crash the caller.
+
+    Defensive extra: before stopping `pid` itself, also best-effort
+    terminates any of its child processes (recursively). We don't
+    currently know whether `fcc-server` ever forks children, but if it
+    does, stopping only the tracked PID would leave them running and
+    potentially still holding FCC's port. `psutil` is already a
+    dependency, so walking and terminating the child tree costs little
+    even if `fcc-server` never actually forks. This step is best-effort
+    and never fails the overall call -- a child that's already gone (or
+    that we can't see) is simply skipped.
     """
     if not is_process_alive(pid):
         return True
 
     try:
         process = psutil.Process(pid)
+        children = process.children(recursive=True)
+    except psutil.NoSuchProcess:
+        return True
+
+    for child in children:
+        try:
+            child.terminate()
+        except psutil.NoSuchProcess:
+            pass
+
+    try:
         process.terminate()
         try:
             process.wait(timeout=timeout)
