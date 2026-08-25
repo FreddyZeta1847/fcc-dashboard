@@ -48,9 +48,10 @@ def _resolve_db_path() -> Path:
     idiomatic FastAPI form, which actually runs `lifespan`) can point the
     app at a throwaway file instead of silently creating
     `~/.fcc-dashboard/fcc_dashboard.db` on whoever's machine runs the
-    tests. No current test exercises the `lifespan` path at all, but the
-    seam is here so the next one that does can use it without editing this
-    file. `get_pricing_config_path` in `dependencies.py` (Task 3) should
+    tests. `tests/test_api.py` exercises the real `lifespan` path using
+    this seam (via `with TestClient(app) as client:`), so any future
+    change here should keep that test green.
+    `get_pricing_config_path` in `dependencies.py` (Task 3) should
     follow this same env-var-override pattern for its own default path
     (e.g. `FCC_DASHBOARD_PRICING_PATH`) for the same reason.
     """
