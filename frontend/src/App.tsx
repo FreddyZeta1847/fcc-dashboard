@@ -3,17 +3,25 @@
  * Root component and the app-level "backend unreachable" resilience gate.
  * Calls useStatus() itself (not delegated to a child) so a network-level
  * failure — the dashboard's OWN backend not running — can short-circuit
- * the whole dashboard before any panel mounts. This is deliberately a
- * different failure mode from `fcc_status: "down"`, which is a *successful*
- * response and is FCC being down, not our backend: see useStatus.ts. The
- * "backend reachable" branch mounts the full Overview page (Task 6), which
- * composes StatusPanel, MoneySavedHeadline, and RecentRequestsFeed.
+ * the whole dashboard before any tab content mounts. This is deliberately
+ * a different failure mode from `fcc_status: "down"`, which is a
+ * *successful* response and is FCC being down, not our backend: see
+ * useStatus.ts. The isLoading/isError branches are evaluated first and
+ * unconditionally on tab state — a user who switched tabs and then the
+ * backend goes down must still see this screen, not a broken page — so
+ * the tab useState and Nav render only past both branches, in the
+ * "backend reachable" return. Task 1 adds the tab shell (Overview, Usage,
+ * Settings, Database); Settings/Database render simple placeholders here
+ * until Tasks 3 and 7 build their real pages.
  */
+import { useState } from 'react'
 import { useStatus } from './hooks/useStatus'
 import { Overview } from './pages/Overview'
+import { Nav, type Tab } from './components/Nav'
 
 function App() {
   const { isLoading, isError } = useStatus()
+  const [tab, setTab] = useState<Tab>('overview')
 
   if (isLoading) {
     return (
@@ -37,7 +45,11 @@ function App() {
   return (
     <div className="min-h-screen">
       <h1 className="text-2xl font-semibold p-4">FCC Dashboard</h1>
-      <Overview />
+      <Nav activeTab={tab} onTabChange={setTab} />
+      {tab === 'overview' && <Overview />}
+      {tab === 'usage' && <div className="p-4">Usage — coming soon</div>}
+      {tab === 'settings' && <div className="p-4">Settings — coming soon</div>}
+      {tab === 'database' && <div className="p-4">Database — coming soon</div>}
     </div>
   )
 }
