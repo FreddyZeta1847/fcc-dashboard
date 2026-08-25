@@ -69,3 +69,11 @@ def test_row_factory_allows_column_name_access():
     conn.commit()
     row = conn.execute("SELECT * FROM requests WHERE request_id = 'req_1'").fetchone()
     assert row["provider"] == "nvidia_nim"
+
+
+def test_init_db_creates_process_state_table_with_one_default_row():
+    conn = init_db(":memory:")
+    rows = conn.execute("SELECT * FROM process_state").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["pid"] is None
+    assert rows[0]["started_at"] is None

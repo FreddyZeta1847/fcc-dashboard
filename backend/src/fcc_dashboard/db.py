@@ -16,6 +16,14 @@ Owns the two tables the backend persists to disk, per BACKEND--architecture:
   see `collector.py`'s `poll_once` docstring for why size alone (whether
   it shrank, stayed the same, or even grew) can't reliably tell a restart
   apart from ordinary appended growth.
+- `process_state` — a single-row table (same id=1 singleton pattern as
+  `collector_state`) that tracks the FCC server process this backend
+  itself launched, if any: `pid` and `started_at` (both NULL when nothing
+  is currently tracked). See `process_control.py` for the primitives that
+  launch/check/terminate that process. This table is advisory bookkeeping
+  only -- per BACKEND--process-control, `/health` (an actual reachability
+  probe) is the authoritative signal for whether FCC is really up, since a
+  PID can be reused by an unrelated process after a reboot.
 
 `init_db(path)` is the only entry point. It is idempotent: safe to call on
 every backend startup, whether `path` is a real file (persistent state) or
@@ -73,15 +81,29 @@ INSERT OR IGNORE INTO collector_state
 VALUES (1, 0, 0, NULL, NULL)
 """
 
+_CREATE_PROCESS_STATE_TABLE = """
+CREATE TABLE IF NOT EXISTS process_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    pid INTEGER,
+    started_at TEXT
+)
+"""
+
+_ENSURE_PROCESS_STATE_ROW = """
+INSERT OR IGNORE INTO process_state (id, pid, started_at)
+VALUES (1, NULL, NULL)
+"""
+
 
 def init_db(path: str | Path) -> sqlite3.Connection:
     """Open (creating if needed) the SQLite DB at `path` and ensure its schema.
 
-    Creates the `requests` and `collector_state` tables if they don't already
-    exist, and guarantees exactly one `collector_state` row (id=1) is
-    present. Safe to call repeatedly against the same file or `:memory:`:
-    existing data (including a previously-updated `collector_state` row) is
-    never reset or duplicated.
+    Creates the `requests`, `collector_state`, and `process_state` tables if
+    they don't already exist, and guarantees exactly one row (id=1) is
+    present in each of the two singleton state tables. Safe to call
+    repeatedly against the same file or `:memory:`: existing data (including
+    a previously-updated `collector_state` or `process_state` row) is never
+    reset or duplicated.
 
     Returns a connection with `row_factory = sqlite3.Row`, so result rows
     are accessible by column name (`row["provider"]`) as well as by index.
@@ -108,6 +130,8 @@ def init_db(path: str | Path) -> sqlite3.Connection:
     conn.execute(_CREATE_REQUESTS_TABLE)
     conn.execute(_CREATE_COLLECTOR_STATE_TABLE)
     conn.execute(_ENSURE_COLLECTOR_STATE_ROW)
+    conn.execute(_CREATE_PROCESS_STATE_TABLE)
+    conn.execute(_ENSURE_PROCESS_STATE_ROW)
     conn.execute(_CREATE_REQUESTS_OCCURRED_AT_INDEX)
     conn.execute(_CREATE_REQUESTS_STATUS_INDEX)
     conn.commit()

@@ -19,7 +19,7 @@ def test_list_tables(client_and_db):
     client, _db = client_and_db
     response = client.get("/db/tables")
     body = response.json()
-    assert set(body["tables"]) == {"requests", "collector_state"}
+    assert set(body["tables"]) == {"requests", "collector_state", "process_state"}
 
 
 def test_get_table_rows(client_and_db):

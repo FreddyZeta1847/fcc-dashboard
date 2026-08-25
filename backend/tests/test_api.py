@@ -25,7 +25,9 @@ def test_lifespan_starts_real_db_and_serves_requests(tmp_path, monkeypatch):
         response = client.get("/db/tables")
 
     assert response.status_code == 200
-    assert set(response.json()["tables"]) == {"requests", "collector_state"}
+    assert set(response.json()["tables"]) == {
+        "requests", "collector_state", "process_state",
+    }
     assert (tmp_path / "test.db").exists()
 
 
