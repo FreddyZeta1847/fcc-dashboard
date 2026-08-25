@@ -148,3 +148,99 @@ def test_stats_corrupt_pricing_file_returns_null_total_savings(tmp_path):
     body = response.json()
     assert body["total_savings"] is None
     assert body["unpriced_request_count"] == 1
+
+
+def test_volume_by_provider_counts_all_rows_regardless_of_pricing_or_status(client_and_db):
+    client, db = client_and_db
+    # Priced, completed.
+    _insert_completed(db, "req_1", "nvidia_nim", "sonnet", "glm-4",
+                       1_000_000, 1_000_000, "2026-08-24T10:00:00.000Z")
+    # Same provider, UNPRICED downstream model -- by_provider would skip
+    # this row entirely; volume_by_provider must still count it.
+    _insert_completed(db, "req_2", "nvidia_nim", "sonnet", "some-unpriced-model",
+                       500_000, 500_000, "2026-08-24T11:00:00.000Z")
+    db.commit()
+
+    response = client.get("/stats?range=last_7_days")
+    body = response.json()
+
+    volume = {row["provider"]: row for row in body["volume_by_provider"]}
+    assert volume["nvidia_nim"]["request_count"] == 2
+    assert volume["nvidia_nim"]["input_tokens"] == 1_500_000
+    assert volume["nvidia_nim"]["output_tokens"] == 1_500_000
+    # by_provider (the savings-only breakdown) should still only see the
+    # one priced row -- confirms the two aggregates are genuinely
+    # independent, not accidentally sharing a filter.
+    by_provider_savings = {row["provider"]: row for row in body["by_provider"]}
+    assert by_provider_savings["nvidia_nim"]["request_count"] == 1
+
+
+def test_volume_by_provider_excludes_null_provider_rows(client_and_db):
+    client, db = client_and_db
+    db.execute(
+        "INSERT INTO requests (request_id, provider, occurred_at, ingested_at, status) "
+        "VALUES ('req_orphan', NULL, '2026-08-24T10:00:00.000Z', "
+        "'2026-08-24T10:00:00.000Z', 'pending')"
+    )
+    db.commit()
+
+    response = client.get("/stats?range=last_7_days")
+    body = response.json()
+
+    assert body["volume_by_provider"] == []
+
+
+def test_volume_by_model_groups_by_provider_and_downstream_model(client_and_db):
+    client, db = client_and_db
+    _insert_completed(db, "req_1", "nvidia_nim", "sonnet", "glm-4",
+                       1_000_000, 1_000_000, "2026-08-24T10:00:00.000Z")
+    _insert_completed(db, "req_2", "openrouter", "sonnet", "glm-4",
+                       200_000, 200_000, "2026-08-24T11:00:00.000Z")
+    db.commit()
+
+    response = client.get("/stats?range=last_7_days")
+    body = response.json()
+
+    assert len(body["volume_by_model"]) == 2
+    keyed = {(row["provider"], row["model"]): row for row in body["volume_by_model"]}
+    assert keyed[("nvidia_nim", "glm-4")]["request_count"] == 1
+    assert keyed[("openrouter", "glm-4")]["request_count"] == 1
+
+
+def test_volume_by_model_excludes_rows_with_null_downstream_model(client_and_db):
+    client, db = client_and_db
+    db.execute(
+        "INSERT INTO requests (request_id, provider, downstream_model, occurred_at, "
+        "ingested_at, status) VALUES "
+        "('req_orphan', 'nvidia_nim', NULL, '2026-08-24T10:00:00.000Z', "
+        "'2026-08-24T10:00:00.000Z', 'pending')"
+    )
+    db.commit()
+
+    response = client.get("/stats?range=last_7_days")
+    body = response.json()
+
+    assert body["volume_by_model"] == []
+
+
+def test_volume_estimated_count_reflects_estimated_timestamp_rows(client_and_db):
+    client, db = client_and_db
+    db.execute(
+        "INSERT INTO requests (request_id, provider, downstream_model, occurred_at, "
+        "occurred_at_is_estimated, ingested_at, status) VALUES "
+        "('req_est', 'nvidia_nim', 'glm-4', '2026-08-24T10:00:00.000Z', 1, "
+        "'2026-08-24T10:00:00.000Z', 'pending')"
+    )
+    _insert_completed(db, "req_real", "nvidia_nim", "sonnet", "glm-4",
+                       100, 100, "2026-08-24T11:00:00.000Z")
+    db.commit()
+
+    response = client.get("/stats?range=last_7_days")
+    body = response.json()
+
+    provider_entry = next(r for r in body["volume_by_provider"] if r["provider"] == "nvidia_nim")
+    assert provider_entry["request_count"] == 2
+    assert provider_entry["estimated_count"] == 1
+
+    model_entry = next(r for r in body["volume_by_model"] if r["model"] == "glm-4")
+    assert model_entry["estimated_count"] == 1

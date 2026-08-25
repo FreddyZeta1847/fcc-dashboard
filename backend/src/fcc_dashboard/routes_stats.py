@@ -2,6 +2,17 @@
 `GET /stats` -- aggregate request counts, token totals, and the dashboard's
 core "money saved" number for a named time range.
 
+Two genuinely different aggregation passes run over the same fetched rows:
+`_aggregate_costs` (feeding `by_provider`) answers a money/savings question,
+so it only ever looks at priced, `status = 'completed'` rows -- an unpriced
+or pending/error row contributes nothing to it. `_aggregate_volume` (feeding
+`volume_by_provider` and `volume_by_model`, added for the frontend's Usage
+page) answers a usage/volume question instead: it counts every row in range
+regardless of status or whether pricing exists for it. They are kept as two
+separate functions on purpose -- don't merge them, and don't make one call
+the other -- so a future change to one's filtering logic can't silently leak
+into the other's numbers.
+
 Follows the conventions `routes_status.py` and `routes_requests.py`
 established for this phase: `get_db` (and here also
 `get_pricing_config_path`) come from `dependencies.py`, never from `api.py`
@@ -67,6 +78,23 @@ class ByProviderStats(BaseModel):
     savings: float
 
 
+class ByProviderVolume(BaseModel):
+    provider: str
+    request_count: int
+    input_tokens: int
+    output_tokens: int
+    estimated_count: int
+
+
+class ByModelVolume(BaseModel):
+    provider: str
+    model: str
+    request_count: int
+    input_tokens: int
+    output_tokens: int
+    estimated_count: int
+
+
 class StatsResponse(BaseModel):
     range: str
     range_start: str
@@ -80,6 +108,8 @@ class StatsResponse(BaseModel):
     total_savings: float | None
     unpriced_request_count: int
     by_provider: list[ByProviderStats]
+    volume_by_provider: list[ByProviderVolume]
+    volume_by_model: list[ByModelVolume]
 
 
 def _fetch_rows_in_range(
@@ -182,6 +212,80 @@ def _aggregate_costs(
     return total_savings, unpriced_request_count, by_provider_list
 
 
+def _aggregate_volume(
+    rows: list[sqlite3.Row],
+) -> tuple[list[ByProviderVolume], list[ByModelVolume]]:
+    """Count ALL rows in range by provider and by (provider, model), regardless
+    of `status` or pricing.
+
+    This is the usage/volume answer, deliberately distinct from
+    `_aggregate_costs`' by_provider (the money/savings answer): a row with an
+    unpriced downstream model, or a pending/error status, still counts here.
+    A row is only dropped from a breakdown when the column that breakdown
+    groups by is itself NULL (no `provider` -> excluded from both; a real
+    `provider` but NULL `downstream_model` -> counted in the provider
+    breakdown only, not the model one).
+    """
+    by_provider: dict[str, dict[str, int]] = {}
+    by_model: dict[tuple[str, str], dict[str, int]] = {}
+
+    for row in rows:
+        provider = row["provider"]
+        downstream_model = row["downstream_model"]
+        input_tokens = row["input_tokens"]
+        output_tokens = row["output_tokens"]
+        is_estimated = bool(row["occurred_at_is_estimated"])
+
+        if provider is not None:
+            bucket = by_provider.setdefault(
+                provider,
+                {"request_count": 0, "input_tokens": 0, "output_tokens": 0, "estimated_count": 0},
+            )
+            bucket["request_count"] += 1
+            if input_tokens is not None:
+                bucket["input_tokens"] += input_tokens
+            if output_tokens is not None:
+                bucket["output_tokens"] += output_tokens
+            if is_estimated:
+                bucket["estimated_count"] += 1
+
+        if provider is not None and downstream_model is not None:
+            model_bucket = by_model.setdefault(
+                (provider, downstream_model),
+                {"request_count": 0, "input_tokens": 0, "output_tokens": 0, "estimated_count": 0},
+            )
+            model_bucket["request_count"] += 1
+            if input_tokens is not None:
+                model_bucket["input_tokens"] += input_tokens
+            if output_tokens is not None:
+                model_bucket["output_tokens"] += output_tokens
+            if is_estimated:
+                model_bucket["estimated_count"] += 1
+
+    volume_by_provider = [
+        ByProviderVolume(
+            provider=provider,
+            request_count=stats["request_count"],
+            input_tokens=stats["input_tokens"],
+            output_tokens=stats["output_tokens"],
+            estimated_count=stats["estimated_count"],
+        )
+        for provider, stats in sorted(by_provider.items())
+    ]
+    volume_by_model = [
+        ByModelVolume(
+            provider=provider,
+            model=model,
+            request_count=stats["request_count"],
+            input_tokens=stats["input_tokens"],
+            output_tokens=stats["output_tokens"],
+            estimated_count=stats["estimated_count"],
+        )
+        for (provider, model), stats in sorted(by_model.items())
+    ]
+    return volume_by_provider, volume_by_model
+
+
 @router.get("/stats", response_model=StatsResponse)
 def get_stats(
     range_name: RangeName = Query(RangeName.last_7_days, alias="range"),
@@ -200,6 +304,7 @@ def get_stats(
     total_output_tokens = sum(
         row["output_tokens"] for row in rows if row["output_tokens"] is not None
     )
+    volume_by_provider, volume_by_model = _aggregate_volume(rows)
 
     try:
         pricing_config = load_pricing_config(pricing_config_path)
@@ -223,6 +328,8 @@ def get_stats(
             total_savings=None,
             unpriced_request_count=completed_requests,
             by_provider=[],
+            volume_by_provider=volume_by_provider,
+            volume_by_model=volume_by_model,
         )
 
     total_savings, unpriced_request_count, by_provider = _aggregate_costs(
@@ -242,4 +349,6 @@ def get_stats(
         total_savings=total_savings,
         unpriced_request_count=unpriced_request_count,
         by_provider=by_provider,
+        volume_by_provider=volume_by_provider,
+        volume_by_model=volume_by_model,
     )
