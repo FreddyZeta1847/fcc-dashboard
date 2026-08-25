@@ -54,7 +54,8 @@
 │           ├── 2026-08-25-phase-2-persistence-collector.md
 │           ├── 2026-08-25-phase-3-api.md
 │           ├── 2026-08-25-phase-4-process-control.md
-│           └── 2026-08-25-phase-5-frontend-scaffold-overview.md
+│           ├── 2026-08-25-phase-5-frontend-scaffold-overview.md
+│           └── 2026-08-25-phase-6a-settings-database.md
 ├── frontend/
 │   ├── public/
 │   │   └── favicon.svg
@@ -67,17 +68,33 @@
 │   │   ├── components/
 │   │   │   ├── MoneySavedHeadline.test.tsx
 │   │   │   ├── MoneySavedHeadline.tsx
+│   │   │   ├── Nav.test.tsx
+│   │   │   ├── Nav.tsx
+│   │   │   ├── PriceRefreshFlow.test.tsx
+│   │   │   ├── PriceRefreshFlow.tsx
+│   │   │   ├── PricingEditor.test.tsx
+│   │   │   ├── PricingEditor.tsx
+│   │   │   ├── ProcessControls.test.tsx
+│   │   │   ├── ProcessControls.tsx
 │   │   │   ├── RecentRequestsFeed.test.tsx
 │   │   │   ├── RecentRequestsFeed.tsx
 │   │   │   ├── StatusPanel.test.tsx
 │   │   │   └── StatusPanel.tsx
 │   │   ├── hooks/
+│   │   │   ├── useControl.ts
+│   │   │   ├── useDbTables.ts
+│   │   │   ├── usePricing.ts
+│   │   │   ├── usePricingMutations.ts
 │   │   │   ├── useRecentRequests.ts
 │   │   │   ├── useStats.ts
 │   │   │   └── useStatus.ts
 │   │   ├── pages/
+│   │   │   ├── Database.test.tsx
+│   │   │   ├── Database.tsx
 │   │   │   ├── Overview.test.tsx
-│   │   │   └── Overview.tsx
+│   │   │   ├── Overview.tsx
+│   │   │   ├── Settings.test.tsx
+│   │   │   └── Settings.tsx
 │   │   ├── test/
 │   │   │   ├── setup.test.ts
 │   │   │   └── setup.ts
