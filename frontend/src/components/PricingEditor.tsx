@@ -13,9 +13,9 @@
  *
  * Save is two-step (this project's confirm-before-write rule,
  * FRONTEND--security): clicking "Save" only stages the pending pair and
- * flips the form into a "Confirm?" state; usePutPricing().mutate is called
- * only from the follow-up "Confirm" click. "Cancel" discards the staged
- * pair without writing anything.
+ * opens the shared ConfirmDialog; usePutPricing().mutate is called only
+ * from the dialog's "Confirm" click. Dismissing the dialog discards the
+ * staged pair without writing anything.
  *
  * A (provider, model) pair that has no price entry anywhere in the config
  * renders as "unknown" (never blank or $0). Nothing this component
@@ -41,6 +41,9 @@ import { useId, useState } from 'react'
 import { usePricing } from '../hooks/usePricing'
 import { usePutPricing } from '../hooks/usePricingMutations'
 import type { PriceEntry, PricingConfig } from '../api/types'
+import { Card } from './Card'
+import { Skeleton } from './Skeleton'
+import { ConfirmDialog } from './ConfirmDialog'
 
 interface PricingRow {
   provider: string
@@ -49,11 +52,10 @@ interface PricingRow {
 }
 
 function buildRows(config: PricingConfig): PricingRow[] {
-  const rows: PricingRow[] = [
-    { provider: 'anthropic', model: 'opus', entry: config.anthropic.opus },
-    { provider: 'anthropic', model: 'sonnet', entry: config.anthropic.sonnet },
-    { provider: 'anthropic', model: 'haiku', entry: config.anthropic.haiku },
-  ]
+  const rows: PricingRow[] = []
+  for (const [model, entry] of Object.entries(config.anthropic)) {
+    rows.push({ provider: 'anthropic', model, entry })
+  }
   for (const [provider, models] of Object.entries(config.providers)) {
     for (const [model, entry] of Object.entries(models)) {
       rows.push({ provider, model, entry })
@@ -93,7 +95,7 @@ function withPairMerged(
   model: string,
   entry: PriceEntry,
 ): PricingConfig {
-  if (provider === 'anthropic' && (model === 'opus' || model === 'sonnet' || model === 'haiku')) {
+  if (provider === 'anthropic') {
     return { ...config, anthropic: { ...config.anthropic, [model]: entry } }
   }
   return {
@@ -103,6 +105,28 @@ function withPairMerged(
       [provider]: { ...config.providers[provider], [model]: entry },
     },
   }
+}
+
+const inputStyle: React.CSSProperties = {
+  font: 'inherit',
+  fontSize: 13,
+  padding: '8px 11px',
+  borderRadius: 9,
+  border: '1px solid var(--border2)',
+  background: 'var(--card2)',
+  color: 'var(--text)',
+  outline: 'none',
+  boxSizing: 'border-box',
+  width: '100%',
+}
+
+const labelStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 5,
+  fontSize: 11.5,
+  fontWeight: 700,
+  color: 'var(--faint)',
 }
 
 export function PricingEditor() {
@@ -122,10 +146,20 @@ export function PricingEditor() {
   const outputPriceId = useId()
 
   if (isError) {
-    return <div className="p-4 text-red-600">Couldn't load pricing config.</div>
+    return (
+      <Card accent="red">
+        <p style={{ color: 'var(--red)' }}>Couldn't load pricing config.</p>
+      </Card>
+    )
   }
   if (isLoading || !data) {
-    return <div className="p-4">Loading pricing…</div>
+    return (
+      <Card style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <Skeleton width="60%" height={14} />
+        <Skeleton width="70%" height={14} delay={0.15} />
+        <Skeleton width="55%" height={14} delay={0.3} />
+      </Card>
+    )
   }
 
   const rows = buildRows(data)
@@ -141,7 +175,6 @@ export function PricingEditor() {
   }
 
   function handleCancelClick() {
-    setValidationError(null)
     setPendingConfirm(false)
   }
 
@@ -166,123 +199,83 @@ export function PricingEditor() {
   }
 
   return (
-    <div className="p-4">
-      <h2 className="text-sm font-medium text-gray-500">Pricing</h2>
-      <div className="overflow-x-auto">
-        <table className="min-w-full">
-          <thead>
-            <tr className="border-b border-gray-300 text-left">
-              <th className="px-3 py-2 text-xs font-medium text-gray-500">Provider</th>
-              <th className="px-3 py-2 text-xs font-medium text-gray-500">Model</th>
-              <th className="px-3 py-2 text-xs font-medium text-gray-500">Input / M</th>
-              <th className="px-3 py-2 text-xs font-medium text-gray-500">Output / M</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={`${row.provider}:${row.model}`} className="border-b border-gray-200">
-                <td className="px-3 py-2 text-sm text-gray-700">{row.provider}</td>
-                <td className="px-3 py-2 text-sm text-gray-700">{row.model}</td>
-                <td className="px-3 py-2 text-sm text-gray-700">
-                  {formatPrice(row.entry?.input_per_million)}
-                </td>
-                <td className="px-3 py-2 text-sm text-gray-700">
-                  {formatPrice(row.entry?.output_per_million)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <Card accent="green">
+      <h2 style={{ fontSize: 16, fontWeight: 800, marginBottom: 4 }}>Pricing</h2>
+      <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>
+        Cost per million tokens, used to compute savings. Missing prices show as unknown.
+      </p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr 150px 150px', gap: 8, padding: '6px 10px', fontSize: 11, fontWeight: 800, letterSpacing: '.07em', textTransform: 'uppercase', color: 'var(--faint)' }}>
+        <span>Provider</span>
+        <span>Model</span>
+        <span style={{ textAlign: 'right' }}>Input / MTok</span>
+        <span style={{ textAlign: 'right' }}>Output / MTok</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', marginBottom: 20 }}>
+        {rows.map((row) => (
+          <div
+            key={`${row.provider}:${row.model}`}
+            style={{ display: 'grid', gridTemplateColumns: '140px 1fr 150px 150px', gap: 8, alignItems: 'center', padding: '9px 10px', borderTop: '1px solid var(--border)' }}
+          >
+            <span style={{ fontWeight: 700 }}>{row.provider}</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, color: 'var(--muted)' }}>{row.model}</span>
+            <span style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, fontStyle: row.entry?.input_per_million === undefined ? 'italic' : 'normal', color: row.entry?.input_per_million === undefined ? 'var(--faint)' : 'var(--text)' }}>
+              {formatPrice(row.entry?.input_per_million)}
+            </span>
+            <span style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, fontStyle: row.entry?.output_per_million === undefined ? 'italic' : 'normal', color: row.entry?.output_per_million === undefined ? 'var(--faint)' : 'var(--text)' }}>
+              {formatPrice(row.entry?.output_per_million)}
+            </span>
+          </div>
+        ))}
       </div>
 
-      <h3 className="mt-4 text-sm font-medium text-gray-500">Add / edit a price</h3>
-      <form
-        className="mt-2 flex flex-col gap-2"
-        onSubmit={(event) => event.preventDefault()}
-      >
-        <div>
-          <label htmlFor={providerId} className="block text-xs text-gray-500">
+      <div style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 14, padding: '18px 20px' }}>
+        <h3 style={{ fontSize: 13, fontWeight: 800, marginBottom: 12 }}>Add or edit a price pair</h3>
+        <form
+          style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1fr 1fr auto', gap: 10, alignItems: 'end' }}
+          onSubmit={(event) => event.preventDefault()}
+        >
+          <label htmlFor={providerId} style={labelStyle}>
             Provider
+            <input id={providerId} type="text" value={provider} onChange={(event) => setProvider(event.target.value)} style={inputStyle} placeholder="groq" />
           </label>
-          <input
-            id={providerId}
-            type="text"
-            value={provider}
-            onChange={(event) => setProvider(event.target.value)}
-            className="border border-gray-300 px-2 py-1 text-sm"
-          />
-        </div>
-        <div>
-          <label htmlFor={modelId} className="block text-xs text-gray-500">
+          <label htmlFor={modelId} style={labelStyle}>
             Model
+            <input id={modelId} type="text" value={model} onChange={(event) => setModel(event.target.value)} style={inputStyle} placeholder="llama-3.3-70b" />
           </label>
-          <input
-            id={modelId}
-            type="text"
-            value={model}
-            onChange={(event) => setModel(event.target.value)}
-            className="border border-gray-300 px-2 py-1 text-sm"
-          />
-        </div>
-        <div>
-          <label htmlFor={inputPriceId} className="block text-xs text-gray-500">
-            Input price per million
+          <label htmlFor={inputPriceId} style={labelStyle}>
+            Input $/MTok
+            <input id={inputPriceId} type="number" value={inputPrice} onChange={(event) => setInputPrice(event.target.value)} style={inputStyle} placeholder="0.59" />
           </label>
-          <input
-            id={inputPriceId}
-            type="number"
-            value={inputPrice}
-            onChange={(event) => setInputPrice(event.target.value)}
-            className="border border-gray-300 px-2 py-1 text-sm"
-          />
-        </div>
-        <div>
-          <label htmlFor={outputPriceId} className="block text-xs text-gray-500">
-            Output price per million
+          <label htmlFor={outputPriceId} style={labelStyle}>
+            Output $/MTok
+            <input id={outputPriceId} type="number" value={outputPrice} onChange={(event) => setOutputPrice(event.target.value)} style={inputStyle} placeholder="0.79" />
           </label>
-          <input
-            id={outputPriceId}
-            type="number"
-            value={outputPrice}
-            onChange={(event) => setOutputPrice(event.target.value)}
-            className="border border-gray-300 px-2 py-1 text-sm"
-          />
-        </div>
-
-        {validationError && (
-          <p className="text-sm text-red-600" role="alert">
-            {validationError}
-          </p>
-        )}
-
-        {!pendingConfirm ? (
           <button
             type="button"
             onClick={handleSaveClick}
-            className="self-start bg-blue-600 px-3 py-1 text-sm font-semibold text-white"
+            style={{ font: 'inherit', fontSize: 13, fontWeight: 800, padding: '9px 18px', borderRadius: 9, border: 'none', background: 'var(--green)', color: '#0c1410', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >
-            Save
+            Save price
           </button>
-        ) : (
-          <div className="flex gap-2">
-            <span className="text-sm text-gray-700">Overwrite the full pricing config?</span>
-            <button
-              type="button"
-              onClick={handleConfirmClick}
-              className="bg-blue-600 px-3 py-1 text-sm font-semibold text-white"
-            >
-              Confirm
-            </button>
-            <button
-              type="button"
-              onClick={handleCancelClick}
-              className="px-3 py-1 text-sm text-gray-600"
-            >
-              Cancel
-            </button>
-          </div>
+        </form>
+        {validationError && (
+          <p role="alert" style={{ marginTop: 12, fontSize: 13, color: 'var(--red)' }}>
+            {validationError}
+          </p>
         )}
-      </form>
-    </div>
+      </div>
+
+      {pendingConfirm && (
+        <ConfirmDialog
+          title="Save this price?"
+          body={`${provider} / ${model} will be set to $${inputPrice} in, $${outputPrice} out per MTok. This immediately affects how savings are calculated.`}
+          confirmLabel="Save price"
+          confirmColor="var(--green)"
+          onConfirm={handleConfirmClick}
+          onCancel={handleCancelClick}
+        />
+      )}
+    </Card>
   )
 }

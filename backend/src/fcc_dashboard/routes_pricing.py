@@ -58,11 +58,26 @@ LITELLM_CATALOG_URL = (
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _FETCH_TIMEOUT = 10.0
 
+# The Anthropic tiers FCC's `gateway_model` field can carry, and the current
+# official per-million-token list price for each (platform.claude.com/docs/en/about-claude/pricing,
+# checked 2026-08-25). These are the literal model ID strings Claude Code
+# sends as `model` in its request -- FCC passes that value straight through
+# as `gateway_model` (see free_claude_code.core.gateway_model_ids), it is
+# not FCC's own naming -- so a future Claude Code model release can add or
+# rename a tier here without any FCC-side change.
+REQUIRED_ANTHROPIC_TIERS: tuple[str, ...] = (
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5-20251001",
+)
+
 SEEDED_DEFAULT_PRICING: dict[str, Any] = {
     "anthropic": {
-        "opus": {"input_per_million": 15.0, "output_per_million": 75.0},
-        "sonnet": {"input_per_million": 3.0, "output_per_million": 15.0},
-        "haiku": {"input_per_million": 0.25, "output_per_million": 1.25},
+        "claude-fable-5": {"input_per_million": 10.0, "output_per_million": 50.0},
+        "claude-opus-5": {"input_per_million": 5.0, "output_per_million": 25.0},
+        "claude-sonnet-5": {"input_per_million": 2.0, "output_per_million": 10.0},
+        "claude-haiku-4-5-20251001": {"input_per_million": 1.0, "output_per_million": 5.0},
     },
     "providers": {},
 }
@@ -72,9 +87,9 @@ class PricingConfig(BaseModel):
     """The full pricing config document -- PRICING-ENGINE's schema.
 
     Beyond "well-formed JSON object", this model enforces the one thing
-    `GET /stats` genuinely depends on at read time: all three Anthropic
-    tiers (`opus`, `sonnet`, `haiku`) must be present under `anthropic`,
-    each with a valid `{input_per_million, output_per_million}` shape --
+    `GET /stats` genuinely depends on at read time: every Anthropic tier in
+    `REQUIRED_ANTHROPIC_TIERS` must be present under `anthropic`, each with
+    a valid `{input_per_million, output_per_million}` shape --
     reusing `pricing.py`'s own `_validate_price_entry` rather than
     duplicating its rules. Without this, an incomplete `PUT /pricing` body
     (e.g. `{"anthropic": {}, "providers": {}}`) would pass validation here
@@ -107,7 +122,7 @@ class PricingConfig(BaseModel):
         if not isinstance(self.anthropic, dict):
             raise ValueError("'anthropic' must be an object")
 
-        for tier in ("opus", "sonnet", "haiku"):
+        for tier in REQUIRED_ANTHROPIC_TIERS:
             entry = self.anthropic.get(tier)
             if entry is None:
                 raise ValueError(
@@ -180,7 +195,7 @@ def _configured_pairs(config: dict) -> list[tuple[str, str]]:
     Order is deterministic (Anthropic tiers first in their fixed order,
     then providers/models sorted) so the response is stable across runs.
     """
-    pairs = [("anthropic", tier) for tier in ("opus", "sonnet", "haiku")]
+    pairs = [("anthropic", tier) for tier in REQUIRED_ANTHROPIC_TIERS]
     providers = config.get("providers", {})
     for provider in sorted(providers):
         for model in sorted(providers[provider]):

@@ -45,6 +45,11 @@ export interface ByModelVolume {
   estimated_count: number
 }
 
+export interface DailySavingsEntry {
+  date: string
+  savings: number
+}
+
 export interface StatsResponse {
   range: string
   range_start: string
@@ -60,6 +65,7 @@ export interface StatsResponse {
   by_provider: ByProviderStats[]
   volume_by_provider: ByProviderVolume[]
   volume_by_model: ByModelVolume[]
+  daily_savings: DailySavingsEntry[]
 }
 
 export type RequestStatus = 'pending' | 'completed' | 'error'
@@ -98,7 +104,7 @@ export interface PriceEntry {
 }
 
 export interface PricingConfig {
-  anthropic: { opus: PriceEntry; sonnet: PriceEntry; haiku: PriceEntry }
+  anthropic: Record<string, PriceEntry>
   providers: Record<string, Record<string, PriceEntry>>
 }
 

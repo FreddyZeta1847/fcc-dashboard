@@ -10,9 +10,10 @@ from fcc_dashboard.db import init_db
 
 SAMPLE_PRICING = {
     "anthropic": {
-        "opus": {"input_per_million": 15.0, "output_per_million": 75.0},
-        "sonnet": {"input_per_million": 3.0, "output_per_million": 15.0},
-        "haiku": {"input_per_million": 0.25, "output_per_million": 1.25},
+        "claude-fable-5": {"input_per_million": 10.0, "output_per_million": 50.0},
+        "claude-opus-5": {"input_per_million": 5.0, "output_per_million": 25.0},
+        "claude-sonnet-5": {"input_per_million": 2.0, "output_per_million": 10.0},
+        "claude-haiku-4-5-20251001": {"input_per_million": 1.0, "output_per_million": 5.0},
     },
     "providers": {
         "nvidia_nim": {
@@ -42,9 +43,9 @@ def test_get_pricing_creates_seeded_file_when_missing(client_and_paths):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["anthropic"]["opus"]["input_per_million"] == 15.0
-    assert body["anthropic"]["sonnet"]["input_per_million"] == 3.0
-    assert body["anthropic"]["haiku"]["input_per_million"] == 0.25
+    assert body["anthropic"]["claude-opus-5"]["input_per_million"] == 5.0
+    assert body["anthropic"]["claude-sonnet-5"]["input_per_million"] == 2.0
+    assert body["anthropic"]["claude-haiku-4-5-20251001"]["input_per_million"] == 1.0
     assert body["providers"] == {}
     assert pricing_path.exists()
 
@@ -107,8 +108,8 @@ def test_refresh_returns_diff_without_writing(client_and_paths, monkeypatch):
 def test_put_pricing_rejects_missing_anthropic_tier(client_and_paths):
     client, _pricing_path = client_and_paths
     bad_config = {
-        "anthropic": {"sonnet": {"input_per_million": 3.0, "output_per_million": 15.0}},
-        # missing opus and haiku
+        "anthropic": {"claude-sonnet-5": {"input_per_million": 2.0, "output_per_million": 10.0}},
+        # missing claude-fable-5, claude-opus-5, and claude-haiku-4-5-20251001
         "providers": {},
     }
     response = client.put("/pricing", json=bad_config)
@@ -119,9 +120,10 @@ def test_put_pricing_rejects_missing_providers_field(client_and_paths):
     client, _pricing_path = client_and_paths
     bad_config = {
         "anthropic": {
-            "opus": {"input_per_million": 15.0, "output_per_million": 75.0},
-            "sonnet": {"input_per_million": 3.0, "output_per_million": 15.0},
-            "haiku": {"input_per_million": 0.25, "output_per_million": 1.25},
+            "claude-fable-5": {"input_per_million": 10.0, "output_per_million": 50.0},
+            "claude-opus-5": {"input_per_million": 5.0, "output_per_million": 25.0},
+            "claude-sonnet-5": {"input_per_million": 2.0, "output_per_million": 10.0},
+            "claude-haiku-4-5-20251001": {"input_per_million": 1.0, "output_per_million": 5.0},
         },
         # missing "providers" entirely
     }
