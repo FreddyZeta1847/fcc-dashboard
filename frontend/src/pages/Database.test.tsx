@@ -57,6 +57,22 @@ describe('Database', () => {
     expect(screen.getByText('provider')).toBeInTheDocument()
   })
 
+  it('shows how many rows are displayed out of the real total, so truncation is visible', async () => {
+    mockFetchByPath({
+      '/db/tables/requests': {
+        table: 'requests', total: 120, limit: 50, offset: 0,
+        columns: ['request_id'],
+        rows: [['req-1'], ['req-2'], ['req-3'], ['req-4'], ['req-5']],
+      },
+      '/db/tables': { tables: ['requests'] },
+    })
+    renderWithClient(<Database />)
+    await waitFor(() => expect(screen.getByText('requests')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('requests'))
+    await waitFor(() => expect(screen.getByText('req-1')).toBeInTheDocument())
+    expect(screen.getByText(/5.*120/)).toBeInTheDocument()
+  })
+
   it('shows an empty-table message when a table has zero rows', async () => {
     mockFetchByPath({
       '/db/tables/collector_state': {

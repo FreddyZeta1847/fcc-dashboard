@@ -12,6 +12,12 @@
  * `unknown[][]`, a genuinely generic dump of whatever the real table
  * schema is. This is deliberate: a future phase can add a table with an
  * entirely different shape and this component keeps working unchanged.
+ *
+ * `data.total` (the real row count) is rendered alongside the fetched
+ * rows: with a fixed limit=50 and no pagination, silently showing 50
+ * oldest-first rows on a table with thousands more would be misleading,
+ * not just "not yet paginated" — the count line is what tells the user
+ * the view is truncated.
  */
 import { useState } from 'react'
 import { useDbTables, useDbTableRows } from '../hooks/useDbTables'
@@ -40,32 +46,37 @@ function TableRowsView({ table }: { table: string }) {
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full">
-        <thead>
-          <tr className="border-b border-gray-300 text-left">
-            {data.columns.map((column) => (
-              <th key={column} className="px-3 py-2 text-xs font-medium text-gray-500">
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.rows.map((row, rowIndex) => (
-            // Raw SQLite dump rows carry no stable id of their own — index
-            // is the only key available, and this list is never reordered.
-            // eslint-disable-next-line react/no-array-index-key
-            <tr key={rowIndex} className="border-b border-gray-200">
-              {data.columns.map((column, columnIndex) => (
-                <td key={column} className="px-3 py-2 text-sm text-gray-700">
-                  {formatCell(row[columnIndex])}
-                </td>
+    <div>
+      <p className="mb-2 text-sm text-gray-500">
+        Showing {data.rows.length} of {data.total} rows (oldest first).
+      </p>
+      <div className="overflow-x-auto">
+        <table className="min-w-full">
+          <thead>
+            <tr className="border-b border-gray-300 text-left">
+              {data.columns.map((column) => (
+                <th key={column} className="px-3 py-2 text-xs font-medium text-gray-500">
+                  {column}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {data.rows.map((row, rowIndex) => (
+              // Raw SQLite dump rows carry no stable id of their own — index
+              // is the only key available, and this list is never reordered.
+              // eslint-disable-next-line react/no-array-index-key
+              <tr key={rowIndex} className="border-b border-gray-200">
+                {data.columns.map((column, columnIndex) => (
+                  <td key={column} className="px-3 py-2 text-sm text-gray-700">
+                    {formatCell(row[columnIndex])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
