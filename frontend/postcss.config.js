@@ -1,6 +1,6 @@
 /*
  * PostCSS configuration
- * Loads Tailwind CSS v4 and Autoprefixer plugins for CSS processing
+ * Loads the Tailwind CSS v4 PostCSS plugin for CSS processing
  */
 
 export default {

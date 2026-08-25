@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from fcc-dashboard!")
+"""fcc_dashboard — backend package root."""
