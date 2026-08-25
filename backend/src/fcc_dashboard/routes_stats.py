@@ -62,7 +62,7 @@ from pydantic import BaseModel
 
 from .datetime_utils import local_date_of, resolve_range_boundaries
 from .dependencies import get_db, get_pricing_config_path
-from .pricing import compute_savings, load_pricing_config
+from .pricing import compute_savings, is_priceable, load_pricing_config
 
 router = APIRouter()
 
@@ -133,32 +133,6 @@ def _fetch_rows_in_range(
     ).fetchall()
 
 
-def _is_priceable(row: sqlite3.Row) -> bool:
-    """Whether a row carries everything `compute_savings` needs.
-
-    Only `status = 'completed'` rows are ever candidates for cost math
-    (pending/error rows count toward request totals but never toward cost).
-    Beyond that, `compute_savings` takes non-Optional `provider`,
-    `downstream_model`, `gateway_model`, `input_tokens`, `output_tokens`
-    arguments -- it isn't designed to receive `None` for any of them, so
-    this check runs *before* calling it, not inside a try/except around it.
-    A NULL `gateway_model` is exactly the Phase 2 orphan-row case (an
-    ingest that never resolved a gateway tier); NULL `provider` or
-    `downstream_model` are the same kind of "we don't know this row's
-    pricing identity" situation. All of these are "unpriced", never "free".
-    """
-    return row["status"] == "completed" and all(
-        row[col] is not None
-        for col in (
-            "input_tokens",
-            "output_tokens",
-            "gateway_model",
-            "downstream_model",
-            "provider",
-        )
-    )
-
-
 def _aggregate_costs(
     rows: list[sqlite3.Row], pricing_config: dict
 ) -> tuple[float, int, list[ByProviderStats]]:
@@ -168,14 +142,14 @@ def _aggregate_costs(
     Returns `(total_savings, unpriced_request_count, by_provider)`.
     `total_savings` only ever accumulates rows `compute_savings` actually
     priced (`unknown=False`); everything else -- unpriceable per
-    `_is_priceable`, or priceable but genuinely unconfigured
+    `is_priceable`, or priceable but genuinely unconfigured
     (`unknown=True`) -- increments `unpriced_request_count` instead.
 
     A row whose `gateway_model` is a real, non-NULL, non-configured
     Anthropic tier makes `compute_savings` raise `ValueError`. That's
     deliberately not caught here: it's a genuine pricing-config gap (every
     FCC-supported tier is supposed to be priced), distinct from the
-    "we don't know this row's tier at all" case `_is_priceable` already
+    "we don't know this row's tier at all" case `is_priceable` already
     screens out, and the plan's rules call for that distinction to surface
     loudly rather than being swallowed alongside orphan rows.
     """
@@ -186,7 +160,7 @@ def _aggregate_costs(
     for row in rows:
         if row["status"] != "completed":
             continue
-        if not _is_priceable(row):
+        if not is_priceable(row):
             unpriced_request_count += 1
             continue
 
@@ -342,7 +316,7 @@ def _aggregate_daily_savings(
         current_day += timedelta(days=1)
 
     for row in rows:
-        if row["status"] != "completed" or not _is_priceable(row):
+        if row["status"] != "completed" or not is_priceable(row):
             continue
         result = compute_savings(
             pricing_config,

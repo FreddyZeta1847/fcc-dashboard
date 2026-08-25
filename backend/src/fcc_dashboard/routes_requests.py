@@ -30,16 +30,32 @@ by interpolating `limit`/`offset`/`status`/`provider` into the SQL string
 -- so there is no SQL-injection surface here. `status` is additionally
 closed to an `Enum` of the three known values, so FastAPI/Pydantic reject
 anything else with a 422 before the query ever runs.
+
+`actual_cost`/`equivalent_cost`/`savings` are real columns on the `requests`
+table, but the collector never writes them -- they're always NULL on disk.
+This route fills them in live, on every read, the same way `routes_stats.py`
+computes `total_savings`: by loading the current pricing config and calling
+`pricing.compute_savings` per row (via the same `is_priceable` gate
+`routes_stats.py` uses). Live-computing here rather than persisting a value
+at ingest time is deliberate -- a price edited in Settings should be
+reflected on every row retroactively, not frozen to whatever price was
+configured when the row was first collected. A row whose `gateway_model` is
+a real, non-NULL, non-configured Anthropic tier still raises `ValueError`
+out of `compute_savings`, same as `routes_stats.py` -- see that module's
+docstring for why that's intentional.
 """
 
+import json
 import sqlite3
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from .dependencies import get_db
+from .dependencies import get_db, get_pricing_config_path
+from .pricing import compute_savings, is_priceable, load_pricing_config
 
 router = APIRouter()
 
@@ -83,6 +99,33 @@ def _build_filters(
     return " WHERE " + " AND ".join(clauses), params
 
 
+def _priced_row(row: sqlite3.Row, pricing_config: dict) -> dict[str, Any]:
+    """`dict(row)` with `actual_cost`/`equivalent_cost`/`savings` filled in
+    live wherever `is_priceable` allows it -- see this module's docstring.
+    Rows that aren't priceable, or are priceable but genuinely unconfigured
+    (`compute_savings` returns `unknown=True`), keep the DB's NULL values.
+    """
+    result = dict(row)
+    if not is_priceable(row):
+        return result
+
+    savings_result = compute_savings(
+        pricing_config,
+        provider=row["provider"],
+        downstream_model=row["downstream_model"],
+        gateway_model=row["gateway_model"],
+        input_tokens=row["input_tokens"],
+        output_tokens=row["output_tokens"],
+    )
+    if savings_result.unknown:
+        return result
+
+    result["actual_cost"] = savings_result.actual_cost
+    result["equivalent_cost"] = savings_result.equivalent_cost
+    result["savings"] = savings_result.savings
+    return result
+
+
 @router.get("/requests", response_model=RequestsListResponse)
 def list_requests(
     limit: int = DEFAULT_LIMIT,
@@ -90,6 +133,7 @@ def list_requests(
     status: RequestStatus | None = None,
     provider: str | None = None,
     db: sqlite3.Connection = Depends(get_db),
+    pricing_config_path: Path = Depends(get_pricing_config_path),
 ) -> RequestsListResponse:
     # Clamp rather than reject: SQLite treats a negative LIMIT as "no
     # limit" and a negative OFFSET as 0, so an out-of-range value here
@@ -111,9 +155,17 @@ def list_requests(
         [*params, limit, offset],
     ).fetchall()
 
+    try:
+        pricing_config = load_pricing_config(pricing_config_path)
+    except (FileNotFoundError, json.JSONDecodeError):
+        # Same "no usable pricing data yet" treatment as routes_stats.py:
+        # every row just comes back unpriced rather than erroring a
+        # read-only listing endpoint.
+        pricing_config = {}
+
     return RequestsListResponse(
         total=total,
         limit=limit,
         offset=offset,
-        results=[dict(row) for row in rows],
+        results=[_priced_row(row, pricing_config) for row in rows],
     )

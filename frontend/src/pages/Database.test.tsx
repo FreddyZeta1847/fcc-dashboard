@@ -86,4 +86,58 @@ describe('Database', () => {
     await userEvent.click(screen.getByText('collector_state'))
     await waitFor(() => expect(screen.getByText(/no rows/i)).toBeInTheDocument())
   })
+
+  it('says "most recent first" for the requests table, but not for other tables', async () => {
+    mockFetchByPath({
+      '/db/tables/requests': {
+        table: 'requests', total: 1, limit: 50, offset: 0,
+        columns: ['request_id'], rows: [['req-1']],
+      },
+      '/db/tables': { tables: ['requests'] },
+    })
+    renderWithClient(<Database />)
+    await waitFor(() => expect(screen.getByText('requests')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('requests'))
+    await waitFor(() => expect(screen.getByText(/most recent first/i)).toBeInTheDocument())
+  })
+
+  it('expands a requests row into a grouped overview, and collapses it again', async () => {
+    mockFetchByPath({
+      '/db/tables/requests': {
+        table: 'requests', total: 1, limit: 50, offset: 0,
+        columns: ['request_id', 'provider', 'gateway_model', 'downstream_model', 'input_tokens', 'output_tokens', 'savings', 'status'],
+        rows: [['req-1', 'NIM', 'claude-opus-5', 'deepseek-ai/deepseek-v4-flash-0731', 50244, 716, 0.27, 'completed']],
+      },
+      '/db/tables': { tables: ['requests'] },
+    })
+    const user = userEvent.setup()
+    renderWithClient(<Database />)
+    await waitFor(() => expect(screen.getByText('requests')).toBeInTheDocument())
+    await user.click(screen.getByText('requests'))
+    await waitFor(() => expect(screen.getByText('req-1')).toBeInTheDocument())
+
+    expect(screen.queryByText('Model routing')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /expand request details/i }))
+    expect(screen.getByText('Model routing')).toBeInTheDocument()
+    expect(screen.getByText('Tokens')).toBeInTheDocument()
+    expect(screen.getByText('Cost')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /collapse request details/i }))
+    expect(screen.queryByText('Model routing')).not.toBeInTheDocument()
+  })
+
+  it('does not add an expand column for tables other than requests', async () => {
+    mockFetchByPath({
+      '/db/tables/collector_state': {
+        table: 'collector_state', total: 1, limit: 50, offset: 0,
+        columns: ['id', 'last_offset'], rows: [[1, 100]],
+      },
+      '/db/tables': { tables: ['collector_state'] },
+    })
+    renderWithClient(<Database />)
+    await waitFor(() => expect(screen.getByText('collector_state')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('collector_state'))
+    await waitFor(() => expect(screen.getByText('100')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /expand request details/i })).not.toBeInTheDocument()
+  })
 })

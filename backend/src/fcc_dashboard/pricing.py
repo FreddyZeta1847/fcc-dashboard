@@ -19,8 +19,39 @@ substitute a default price.
 """
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def is_priceable(row: sqlite3.Row) -> bool:
+    """Whether a `requests` row carries everything `compute_savings` needs.
+
+    Only `status = 'completed'` rows are ever candidates for cost math
+    (pending/error rows count toward request totals but never toward cost).
+    Beyond that, `compute_savings` takes non-Optional `provider`,
+    `downstream_model`, `gateway_model`, `input_tokens`, `output_tokens`
+    arguments -- it isn't designed to receive `None` for any of them, so
+    this check runs *before* calling it, not inside a try/except around it.
+    A NULL `gateway_model` is exactly the Phase 2 orphan-row case (an
+    ingest that never resolved a gateway tier); NULL `provider` or
+    `downstream_model` are the same kind of "we don't know this row's
+    pricing identity" situation. All of these are "unpriced", never "free".
+
+    Shared between `routes_stats.py` (aggregate savings) and
+    `routes_requests.py` (per-row savings on the raw listing) -- both need
+    the exact same "can this row be priced at all" answer.
+    """
+    return row["status"] == "completed" and all(
+        row[col] is not None
+        for col in (
+            "input_tokens",
+            "output_tokens",
+            "gateway_model",
+            "downstream_model",
+            "provider",
+        )
+    )
 
 
 def load_pricing_config(path: Path) -> dict:

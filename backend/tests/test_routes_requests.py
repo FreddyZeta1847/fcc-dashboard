@@ -1,10 +1,21 @@
 """Tests for GET /requests."""
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
-from fcc_dashboard.api import app, get_db
+from fcc_dashboard.api import app, get_db, get_pricing_config_path
 from fcc_dashboard.db import init_db
+
+SAMPLE_PRICING = {
+    "anthropic": {
+        "claude-opus-5": {"input_per_million": 5.0, "output_per_million": 25.0},
+    },
+    "providers": {
+        "NIM": {"deepseek-ai/deepseek-v4-flash-0731": {"input_per_million": 0.0, "output_per_million": 0.0}},
+    },
+}
 
 
 def _insert_request(conn, request_id, provider, status, occurred_at):
@@ -15,10 +26,25 @@ def _insert_request(conn, request_id, provider, status, occurred_at):
     )
 
 
+def _insert_priceable_request(
+    conn, request_id, provider, downstream_model, gateway_model,
+    input_tokens, output_tokens, occurred_at,
+):
+    conn.execute(
+        "INSERT INTO requests (request_id, provider, downstream_model, gateway_model, "
+        "input_tokens, output_tokens, occurred_at, ingested_at, status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed')",
+        (request_id, provider, downstream_model, gateway_model, input_tokens, output_tokens, occurred_at, occurred_at),
+    )
+
+
 @pytest.fixture
-def client_and_db():
+def client_and_db(tmp_path):
     test_db = init_db(":memory:")
+    pricing_path = tmp_path / "pricing.json"
+    pricing_path.write_text(json.dumps(SAMPLE_PRICING), encoding="utf-8")
     app.dependency_overrides[get_db] = lambda: test_db
+    app.dependency_overrides[get_pricing_config_path] = lambda: pricing_path
     yield TestClient(app), test_db
     app.dependency_overrides.clear()
 
@@ -89,3 +115,61 @@ def test_requests_empty_table_returns_empty_results(client_and_db):
     body = response.json()
     assert body["total"] == 0
     assert body["results"] == []
+
+
+def test_requests_fills_in_savings_live_for_a_priced_row(client_and_db):
+    client, db = client_and_db
+    _insert_priceable_request(
+        db, "req_1", "NIM", "deepseek-ai/deepseek-v4-flash-0731", "claude-opus-5",
+        1_000_000, 1_000_000, "2026-08-24T10:00:00.000Z",
+    )
+    db.commit()
+
+    response = client.get("/requests")
+
+    row = response.json()["results"][0]
+    assert row["actual_cost"] == 0.0
+    assert row["equivalent_cost"] == 30.0
+    assert row["savings"] == 30.0
+
+
+def test_requests_leaves_savings_null_for_an_unconfigured_pair(client_and_db):
+    client, db = client_and_db
+    _insert_priceable_request(
+        db, "req_1", "some_unpriced_provider", "some-model", "claude-opus-5",
+        1_000, 1_000, "2026-08-24T10:00:00.000Z",
+    )
+    db.commit()
+
+    response = client.get("/requests")
+
+    row = response.json()["results"][0]
+    assert row["actual_cost"] is None
+    assert row["equivalent_cost"] is None
+    assert row["savings"] is None
+
+
+def test_requests_leaves_savings_null_for_a_pending_row(client_and_db):
+    client, db = client_and_db
+    _insert_request(db, "req_1", "NIM", "pending", "2026-08-24T10:00:00.000Z")
+    db.commit()
+
+    response = client.get("/requests")
+
+    row = response.json()["results"][0]
+    assert row["savings"] is None
+
+
+def test_requests_treats_missing_pricing_file_as_all_unpriced(client_and_db, tmp_path):
+    client, db = client_and_db
+    app.dependency_overrides[get_pricing_config_path] = lambda: tmp_path / "does-not-exist.json"
+    _insert_priceable_request(
+        db, "req_1", "NIM", "deepseek-ai/deepseek-v4-flash-0731", "claude-opus-5",
+        1_000_000, 1_000_000, "2026-08-24T10:00:00.000Z",
+    )
+    db.commit()
+
+    response = client.get("/requests")
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["savings"] is None
