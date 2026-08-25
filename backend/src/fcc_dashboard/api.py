@@ -21,7 +21,7 @@ Phase 3's later tasks and Phase 4/5 all build on). Owns two things:
   matches regardless of which module a caller imported `get_db` from.
 
 Routers (one per feature area -- `routes_status`, `routes_requests`,
-`routes_stats`, `routes_pricing` here, more added by later tasks) are imported and included
+`routes_stats`, `routes_pricing`, `routes_db` here) are imported and included
 normally, at the top of this file, since
 `dependencies.py` being import-order-independent means there's no longer a
 reason to delay it.
@@ -33,7 +33,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from . import routes_pricing, routes_requests, routes_stats, routes_status
+from . import routes_db, routes_pricing, routes_requests, routes_stats, routes_status
 from .db import init_db
 from .dependencies import get_db, get_pricing_config_path  # noqa: F401 (re-exported)
 
@@ -76,3 +76,4 @@ app.include_router(routes_status.router)
 app.include_router(routes_requests.router)
 app.include_router(routes_stats.router)
 app.include_router(routes_pricing.router)
+app.include_router(routes_db.router)
