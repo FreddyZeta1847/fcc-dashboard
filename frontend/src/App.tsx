@@ -17,6 +17,7 @@
 import { useState } from 'react'
 import { useStatus } from './hooks/useStatus'
 import { Overview } from './pages/Overview'
+import { Usage } from './pages/Usage'
 import { Database } from './pages/Database'
 import { Settings } from './pages/Settings'
 import { Nav, type Tab } from './components/Nav'
@@ -49,7 +50,7 @@ function App() {
       <h1 className="text-2xl font-semibold p-4">FCC Dashboard</h1>
       <Nav activeTab={tab} onTabChange={setTab} />
       {tab === 'overview' && <Overview />}
-      {tab === 'usage' && <div className="p-4">Usage — coming soon</div>}
+      {tab === 'usage' && <Usage />}
       {tab === 'settings' && <Settings />}
       {tab === 'database' && <Database />}
     </div>

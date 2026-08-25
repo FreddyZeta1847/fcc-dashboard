@@ -26,6 +26,25 @@ export interface ByProviderStats {
   savings: number
 }
 
+export type RangeName = 'today' | 'last_7_days' | 'last_30_days' | 'all_time'
+
+export interface ByProviderVolume {
+  provider: string
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  estimated_count: number
+}
+
+export interface ByModelVolume {
+  provider: string
+  model: string
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  estimated_count: number
+}
+
 export interface StatsResponse {
   range: string
   range_start: string
@@ -39,6 +58,8 @@ export interface StatsResponse {
   total_savings: number | null
   unpriced_request_count: number
   by_provider: ByProviderStats[]
+  volume_by_provider: ByProviderVolume[]
+  volume_by_model: ByModelVolume[]
 }
 
 export type RequestStatus = 'pending' | 'completed' | 'error'
