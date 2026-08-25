@@ -21,7 +21,13 @@ reuses PIDs after a reboot. This module's return values are therefore
 advisory, not authoritative; the routes layer treats an actual `/health`
 probe against the running server as the source of truth for "is FCC really
 up," and only uses `process_state` / `is_process_alive` to decide whether a
-process even exists to check.
+process even exists to check. `is_tracked_fcc_process(pid)` closes the
+identity gap `is_process_alive` deliberately leaves open: before any code
+path actually *terminates* a persisted PID (or hands it back as "the PID we
+believe is fcc-server"), it must go through `is_tracked_fcc_process`, which
+additionally checks the process's name -- this is what makes a PID-reuse
+scenario (e.g. start FCC, reboot, click Stop) fail safe instead of silently
+terminating an unrelated process.
 
 `launch_detached(executable)` and the test-only-facing `_launch_detached_args
 (args)` share one code path deliberately: `launch_detached` is just
@@ -147,6 +153,24 @@ def is_process_alive(pid: int) -> bool:
     try:
         process = psutil.Process(pid)
         return process.is_running() and process.status() != psutil.STATUS_ZOMBIE
+    except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
+        return False
+
+
+def is_tracked_fcc_process(pid: int) -> bool:
+    """True only if `pid` is alive AND still looks like the fcc-server process
+    we would have launched -- not just any process that happens to have this PID.
+
+    PIDs get reused after a reboot; a persisted PID from a previous session could
+    belong to a completely different (and important) process by the time we act
+    on it. This check exists specifically to make that unsafe -- never terminate
+    a PID without first confirming it's still plausibly ours.
+    """
+    try:
+        proc = psutil.Process(pid)
+        if proc.status() == psutil.STATUS_ZOMBIE:
+            return False
+        return "fcc-server" in proc.name().lower()
     except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
         return False
 

@@ -12,6 +12,12 @@ call, in this order, no matter which branch below eventually fires):
    those rows to a later truncation/rotation the collector wouldn't be able
    to make sense of retroactively. This call is unconditional: it happens
    before health is even checked, so there is no branch that can skip it.
+   Run via `run_in_threadpool` (not called directly) because `poll_once` is
+   fully synchronous file I/O + SQLite work -- calling it inline here would
+   block the whole event loop for the duration of a large catch-up read,
+   stalling every other concurrent request this async handler shares a loop
+   with. `stop_fcc` below doesn't need this treatment since it's already a
+   plain (threadpool-dispatched) `def`.
 2. **Check live health** via `routes_status._check_fcc_health()` -- the
    same authoritative reachability probe `GET /status` uses, reused rather
    than duplicated. Deliberately called as `routes_status._check_fcc_health()`
@@ -25,7 +31,11 @@ call, in this order, no matter which branch below eventually fires):
 3. **Already up -> no-op.** Returns `"already_running"` with whatever PID
    `process_state` currently has on file (or `null` if none -- FCC can be
    "up" without us having ever launched it ourselves, e.g. the user started
-   it by hand outside the dashboard). Nothing is launched in this branch.
+   it by hand outside the dashboard). If a PID *is* on file, it's only
+   returned once `is_tracked_fcc_process` has vouched for it -- otherwise
+   the health check says something is up, but we can't say which PID it
+   is, so `null` is returned rather than an unverified guess. Nothing is
+   launched in this branch.
 4. **Not up -> try to launch.** `find_fcc_server_executable()` /
    `launch_detached()` are imported as bare names (`from .process_control
    import find_fcc_server_executable, launch_detached`) rather than
@@ -38,12 +48,41 @@ call, in this order, no matter which branch below eventually fires):
    `find_fcc_server_executable()` means FCC isn't installed on this
    machine -- a normal, expected outcome for a user who hasn't set it up
    yet, not a server error, so it's still a `200` (`"executable_not_found"`,
-   `pid: null`). Otherwise `launch_detached()` starts it and its PID plus
-   the current timestamp (`now_utc_iso8601`, Phase 1) are persisted into
-   `process_state` so a later call can find it again.
+   `pid: null`). A `launch_detached()` call that raises `OSError` (e.g. the
+   executable vanished between the lookup and the launch, or isn't
+   actually executable) is caught and reported as `"launch_failed"`,
+   `pid: null`, also `200` -- not an opaque 500. Otherwise `launch_detached()`
+   starts it and its PID plus the current timestamp (`now_utc_iso8601`,
+   Phase 1) are persisted into `process_state` via a conditional
+   `UPDATE ... WHERE id = 1 AND pid IS NULL` so a later call can find it
+   again -- see `_start_lock` below for why that conditional write exists.
 
 `async def` because step 2 awaits `_check_fcc_health()`, matching
 `routes_status.py`'s handler.
+
+A module-level `asyncio.Lock` (`_start_lock`) is held across this handler's
+entire body. Without it, two concurrent `POST /control/start` requests can
+both `await` at step 1/2, both observe "not running," and both launch a
+process -- only one PID gets persisted, orphaning the other. The lock
+serializes the whole check-then-launch sequence so only one request at a
+time can be mid-flight through it. The conditional persist
+(`WHERE id = 1 AND pid IS NULL`) is defense in depth on top of the lock,
+not a replacement for it: if the write still finds a PID already present
+(shouldn't happen with the lock, but the contract doesn't rely on that),
+the process we just launched is terminated to avoid leaving it orphaned,
+and `"already_running"` is returned with the PID that beat us to it.
+
+Note: `_start_lock` does NOT cover a concurrent start-vs-stop race. `start`
+runs on the asyncio event loop; `stop` is a plain `def` and therefore runs
+in Starlette's threadpool -- two different execution contexts, so one
+`asyncio.Lock` can't serialize both. This gap is accepted as benign: the
+worst case is `stop` clearing the PID `start` just persisted (or vice
+versa in timing), which degrades to a "lost tracking" case -- a PID that
+existed but is no longer recorded -- not a wrong-process kill. That
+degraded case is exactly what `is_tracked_fcc_process` and the startup
+reconciliation step in `api.py`'s `lifespan` already exist to make safe:
+neither ever acts on a PID without first confirming it's still plausibly
+`fcc-server`.
 
 `POST /control/stop` -- stop the FCC server process this backend is tracking,
 if any. Same flush-before-action guarantee as start: `poll_once` is the
@@ -52,16 +91,28 @@ the identical reason (draining whatever's already on disk before any
 decision is made). After that:
 
 1. Read the persisted PID from `process_state` (`_persisted_pid`, shared
-   with `start_fcc`). If it's `NULL`, or `is_process_alive(pid)` says the
-   PID isn't actually alive (stale bookkeeping -- e.g. the process crashed,
-   or was killed outside the dashboard), there is nothing to stop: clear
-   `process_state` back to `NULL`/`NULL` (nothing left to track either way)
-   and return `"not_running"` with `pid: null`.
-2. Otherwise call `terminate_process(pid)`, then clear `process_state` the
-   same way, and return `"stopped"` with the PID that was just stopped.
+   with `start_fcc`). If it's `NULL`, or `is_tracked_fcc_process(pid)` says
+   the PID isn't alive *or* isn't actually `fcc-server` any more (stale
+   bookkeeping -- the process crashed, was killed outside the dashboard, or
+   -- the critical case -- the OS reused this PID for an unrelated process
+   after a reboot), there is nothing safe to stop: clear `process_state`
+   back to `NULL`/`NULL` (nothing left to track either way) and return
+   `"not_running"` with `pid: null`. This is deliberate: an alive-but-wrong
+   process is treated identically to "not running," never terminated. This
+   also covers the case where FCC genuinely is running but wasn't started
+   by this dashboard (a PID we never persisted, or a since-reused one) --
+   the safety behavior and the "we don't own this instance" behavior are
+   the same code path on purpose.
+2. Otherwise call `terminate_process(pid)`. If it returns `False` (the OS
+   couldn't be confirmed to have actually killed it), `process_state` is
+   left untouched -- the PID stays tracked so a retry remains possible --
+   and `"stop_failed"` is returned rather than silently reporting success
+   on a process that might still be running. Only once `terminate_process`
+   confirms the stop does `process_state` get cleared and `"stopped"`
+   returned with the PID that was just stopped.
 
-`is_process_alive` / `terminate_process` are imported as bare names from
-`.process_control`, matching the `find_fcc_server_executable` /
+`is_tracked_fcc_process` / `terminate_process` are imported as bare names
+from `.process_control`, matching the `find_fcc_server_executable` /
 `launch_detached` pattern above -- the test suite patches them directly on
 `routes_control` and relies on the handler resolving the bare name from
 this module's own globals at call time.
@@ -69,15 +120,26 @@ this module's own globals at call time.
 Plain `def`, not `async def`: unlike start, stop never awaits anything --
 it doesn't call `_check_fcc_health()`, and `poll_once`/`terminate_process`
 are both synchronous.
+
+Both routes sit behind `reject_cross_site_requests`, applied at the router
+level (`APIRouter(dependencies=[...])`) so it can never be forgotten on a
+future third endpoint added to this router. See that function's own
+docstring for why: a "CORS simple request" (a same-origin-looking POST with
+no custom headers) needs no preflight, so any webpage the user has open in
+another tab could otherwise silently trigger start/stop against this
+locally-running backend.
 """
 
+import asyncio
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from . import routes_status
 from .collector import poll_once
@@ -85,27 +147,50 @@ from .datetime_utils import now_utc_iso8601
 from .dependencies import get_db, get_fcc_log_path
 from .process_control import (
     find_fcc_server_executable,
-    is_process_alive,
+    is_tracked_fcc_process,
     launch_detached,
     terminate_process,
 )
 
-router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def reject_cross_site_requests(request: Request) -> None:
+    """Reject requests whose Sec-Fetch-Site header indicates they originated
+    from a different site than this API -- defends the process-control
+    endpoints against a malicious page silently POSTing to them while the
+    user has this dashboard's backend running locally. Non-browser clients
+    (curl, the dashboard's own frontend dev server) send no such header and
+    pass through unaffected.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site not in (None, "same-origin", "none"):
+        raise HTTPException(status_code=403, detail="cross-site request rejected")
+
+
+router = APIRouter(dependencies=[Depends(reject_cross_site_requests)])
+
+# Serializes start_fcc's entire check-then-launch body against concurrent
+# `POST /control/start` calls -- see module docstring for why, and for the
+# accepted start-vs-stop gap this lock does NOT cover.
+_start_lock = asyncio.Lock()
 
 
 class ControlResponse(BaseModel):
-    action: Literal["started", "already_running", "executable_not_found"]
+    action: Literal[
+        "started", "already_running", "executable_not_found", "launch_failed"
+    ]
     pid: int | None
 
 
 class StopResponse(BaseModel):
-    action: Literal["stopped", "not_running"]
+    action: Literal["stopped", "not_running", "stop_failed"]
     pid: int | None
 
 
 def _persisted_pid(db: sqlite3.Connection) -> int | None:
     """Whatever PID `process_state` currently has on file, or `None`."""
-    row = db.execute("SELECT pid FROM process_state").fetchone()
+    row = db.execute("SELECT pid FROM process_state WHERE id = 1").fetchone()
     return row["pid"] if row is not None else None
 
 
@@ -126,30 +211,50 @@ async def start_fcc(
     db: sqlite3.Connection = Depends(get_db),
     fcc_log_path: Path = Depends(get_fcc_log_path),
 ) -> ControlResponse:
-    poll_once(db, fcc_log_path)
+    async with _start_lock:
+        await run_in_threadpool(poll_once, db, fcc_log_path)
 
-    if await _is_fcc_up():
-        return ControlResponse(action="already_running", pid=_persisted_pid(db))
+        if await _is_fcc_up():
+            pid = _persisted_pid(db)
+            if pid is not None and not is_tracked_fcc_process(pid):
+                pid = None
+            return ControlResponse(action="already_running", pid=pid)
 
-    executable = find_fcc_server_executable()
-    if executable is None:
-        return ControlResponse(action="executable_not_found", pid=None)
+        executable = find_fcc_server_executable()
+        if executable is None:
+            return ControlResponse(action="executable_not_found", pid=None)
 
-    pid = launch_detached(executable)
-    db.execute(
-        "UPDATE process_state SET pid = ?, started_at = ? WHERE id = 1",
-        (pid, now_utc_iso8601()),
-    )
-    db.commit()
+        try:
+            pid = launch_detached(executable)
+        except OSError as exc:
+            logger.warning("Failed to launch %s: %s", executable, exc)
+            return ControlResponse(action="launch_failed", pid=None)
 
-    return ControlResponse(action="started", pid=pid)
+        cursor = db.execute(
+            "UPDATE process_state SET pid = ?, started_at = ? "
+            "WHERE id = 1 AND pid IS NULL",
+            (pid, now_utc_iso8601()),
+        )
+        db.commit()
+
+        if cursor.rowcount == 0:
+            # Defense in depth (the lock above should make this
+            # unreachable in practice): someone else's PID is already
+            # persisted, so don't orphan the process we just launched.
+            terminate_process(pid)
+            return ControlResponse(
+                action="already_running", pid=_persisted_pid(db)
+            )
+
+        return ControlResponse(action="started", pid=pid)
 
 
 def _clear_process_state(db: sqlite3.Connection) -> None:
     """Reset `process_state` back to its untracked baseline (`pid` and
     `started_at` both `NULL`). Called whenever `/control/stop` concludes
     there is nothing left to track -- whether because it just stopped the
-    process itself, or because the persisted PID was already stale.
+    process itself, or because the persisted PID was already stale or
+    unverifiable.
     """
     db.execute(
         "UPDATE process_state SET pid = NULL, started_at = NULL WHERE id = 1"
@@ -165,10 +270,15 @@ def stop_fcc(
     poll_once(db, fcc_log_path)
 
     pid = _persisted_pid(db)
-    if pid is None or not is_process_alive(pid):
+    if pid is None or not is_tracked_fcc_process(pid):
         _clear_process_state(db)
         return StopResponse(action="not_running", pid=None)
 
-    terminate_process(pid)
+    if not terminate_process(pid):
+        # Termination could not be confirmed -- keep the PID tracked so a
+        # retry is possible, rather than reporting a false "stopped" and
+        # losing the ability to act on this process again.
+        return StopResponse(action="stop_failed", pid=pid)
+
     _clear_process_state(db)
     return StopResponse(action="stopped", pid=pid)

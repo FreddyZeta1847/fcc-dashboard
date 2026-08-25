@@ -10,6 +10,17 @@ Phase 3's later tasks and Phase 4/5 all build on). Owns two things:
   `_resolve_db_path()` (normally `~/.fcc-dashboard/fcc_dashboard.db`,
   creating the parent directory if it doesn't exist yet) and stores the
   connection on `app.state.db`. On shutdown it closes that connection.
+  Immediately after `init_db`, it also runs `_reconcile_process_state`:
+  if `process_state` has a non-NULL PID left over from a previous session
+  but that PID no longer looks like `fcc-server` (per
+  `process_control.is_tracked_fcc_process` -- the machine may have
+  rebooted and the OS reused the PID for something else entirely), the
+  stale row is cleared before any request has a chance to act on it. This
+  is what makes the "start FCC, reboot, click Stop" PID-reuse hazard
+  structurally impossible rather than merely unlikely: `stop_fcc`'s own
+  identity check would also catch it, but reconciling at startup means a
+  wrong PID never sits around waiting to be misread as "ours" in the
+  first place.
 - The dependency-provider functions routes use (`Depends(get_db)`, etc.)
   to reach shared resources without touching `app.state` directly. These
   actually live in `dependencies.py` -- a leaf module with no import from
@@ -29,6 +40,7 @@ reason to delay it.
 """
 
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -48,6 +60,7 @@ from .dependencies import (  # noqa: F401 (re-exported)
     get_fcc_log_path,
     get_pricing_config_path,
 )
+from .process_control import is_tracked_fcc_process
 
 DEFAULT_DB_PATH = Path.home() / ".fcc-dashboard" / "fcc_dashboard.db"
 
@@ -71,12 +84,42 @@ def _resolve_db_path() -> Path:
     return Path(override) if override else DEFAULT_DB_PATH
 
 
+def _reconcile_process_state(db: sqlite3.Connection) -> None:
+    """Clear a stale/untrustworthy persisted PID at startup.
+
+    `process_state.pid` survives across our own restarts (and across a
+    full machine reboot) by design -- that's how `/control/stop` finds a
+    process it started in a previous session. But a reboot is exactly the
+    scenario where a persisted PID becomes dangerous: the OS is free to
+    reuse that PID number for a completely different process, and nothing
+    else in this codebase reconciles the persisted value against reality
+    before a request could act on it.
+
+    Run once, right after `init_db`, before the app starts serving
+    requests: if a PID is on file and `is_tracked_fcc_process` can't
+    confirm it's still plausibly `fcc-server`, the row is reset to
+    `NULL`/`NULL` -- the same "nothing to track" baseline
+    `routes_control._clear_process_state` uses. This mirrors that
+    function's logic rather than importing it, to keep `api.py` free of a
+    dependency on the routes layer (route modules already depend on
+    `dependencies.py`/`db.py`, not the reverse).
+    """
+    row = db.execute("SELECT pid FROM process_state WHERE id = 1").fetchone()
+    pid = row["pid"] if row is not None else None
+    if pid is not None and not is_tracked_fcc_process(pid):
+        db.execute(
+            "UPDATE process_state SET pid = NULL, started_at = NULL WHERE id = 1"
+        )
+        db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Open the on-disk DB on startup; close it on shutdown."""
     db_path = _resolve_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     app.state.db = init_db(db_path)
+    _reconcile_process_state(app.state.db)
     try:
         yield
     finally:

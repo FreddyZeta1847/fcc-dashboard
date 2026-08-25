@@ -14,6 +14,7 @@ from fcc_dashboard import process_control
 from fcc_dashboard.process_control import (
     find_fcc_server_executable,
     is_process_alive,
+    is_tracked_fcc_process,
     launch_detached,
     terminate_process,
 )
@@ -154,6 +155,63 @@ def test_terminate_process_swallows_access_denied_on_child_terminate(monkeypatch
     finally:
         monkeypatch.undo()
         terminate_process(pid)
+
+
+def test_is_tracked_fcc_process_false_for_unrelated_process_name(monkeypatch):
+    """The critical PID-reuse guard: an alive process whose name doesn't
+    look like fcc-server must never be reported as "ours"."""
+
+    class _FakeOtherProcess:
+        def status(self):
+            return process_control.psutil.STATUS_RUNNING
+
+        def name(self):
+            return "some_other_program.exe"
+
+    monkeypatch.setattr(
+        process_control.psutil, "Process", lambda pid: _FakeOtherProcess()
+    )
+
+    assert is_tracked_fcc_process(4242) is False
+
+
+def test_is_tracked_fcc_process_true_for_matching_process_name(monkeypatch):
+    class _FakeFccProcess:
+        def status(self):
+            return process_control.psutil.STATUS_RUNNING
+
+        def name(self):
+            return "fcc-server"
+
+    monkeypatch.setattr(
+        process_control.psutil, "Process", lambda pid: _FakeFccProcess()
+    )
+
+    assert is_tracked_fcc_process(4242) is True
+
+
+def test_is_tracked_fcc_process_false_when_process_no_longer_exists(monkeypatch):
+    def raise_no_such_process(pid):
+        raise process_control.psutil.NoSuchProcess(pid=pid)
+
+    monkeypatch.setattr(process_control.psutil, "Process", raise_no_such_process)
+
+    assert is_tracked_fcc_process(999_999) is False
+
+
+def test_is_tracked_fcc_process_false_for_zombie(monkeypatch):
+    class _FakeZombieProcess:
+        def status(self):
+            return process_control.psutil.STATUS_ZOMBIE
+
+        def name(self):
+            return "fcc-server"
+
+    monkeypatch.setattr(
+        process_control.psutil, "Process", lambda pid: _FakeZombieProcess()
+    )
+
+    assert is_tracked_fcc_process(4242) is False
 
 
 def test_terminate_process_also_terminates_child_processes():
