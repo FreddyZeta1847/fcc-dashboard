@@ -36,26 +36,43 @@ call, in this order, no matter which branch below eventually fires):
    the health check says something is up, but we can't say which PID it
    is, so `null` is returned rather than an unverified guess. Nothing is
    launched in this branch.
-4. **Not up -> try to launch.** `find_fcc_server_executable()` /
-   `launch_detached()` are imported as bare names (`from .process_control
-   import find_fcc_server_executable, launch_detached`) rather than
-   accessed via a `process_control.` prefix, matching the pattern Task 1
-   established: the test suite patches these two names directly on
-   `routes_control` (`monkeypatch.setattr(routes_control,
-   "find_fcc_server_executable", ...)`), which only works if the handler
-   body resolves the bare name from this module's own globals at call
-   time -- exactly what a plain function-body reference does. `None` from
-   `find_fcc_server_executable()` means FCC isn't installed on this
-   machine -- a normal, expected outcome for a user who hasn't set it up
-   yet, not a server error, so it's still a `200` (`"executable_not_found"`,
-   `pid: null`). A `launch_detached()` call that raises `OSError` (e.g. the
-   executable vanished between the lookup and the launch, or isn't
-   actually executable) is caught and reported as `"launch_failed"`,
-   `pid: null`, also `200` -- not an opaque 500. Otherwise `launch_detached()`
-   starts it and its PID plus the current timestamp (`now_utc_iso8601`,
-   Phase 1) are persisted into `process_state` via a conditional
-   `UPDATE ... WHERE id = 1 AND pid IS NULL` so a later call can find it
-   again -- see `_start_lock` below for why that conditional write exists.
+4. **Not up, but a PID is on file -> resolve it before launching.** The
+   health check just said "down," yet `process_state` has a non-NULL PID
+   left over from earlier. Two different things can cause that, and they
+   get different handling: if `is_tracked_fcc_process` confirms the PID
+   is still a live `fcc-server`, it's a health-check-vs-persisted-state
+   race -- trust the PID, return `"already_running"` with it, and launch
+   nothing. Otherwise it's a stale, dead PID (a crashed `fcc-server`, or
+   one a prior `"stop_failed"` response deliberately preserved for a
+   retry) -- `process_state` is cleared back to `NULL`/`NULL` (the same
+   reset `stop_fcc`'s `_clear_process_state` uses) before falling through
+   to step 5. This step exists specifically so a stale non-NULL PID can
+   never be mistaken, at step 5, for "a concurrent request beat us": that
+   conditional write only matches a genuinely `NULL` row, so without this
+   step a stale PID would make it look like a concurrent winner, causing
+   the process about to be launched to be killed the instant it starts --
+   see `_start_lock` below for the actual concurrent case this protects.
+5. **Genuinely nothing on file -> try to launch.**
+   `find_fcc_server_executable()` / `launch_detached()` are imported as
+   bare names (`from .process_control import find_fcc_server_executable,
+   launch_detached`) rather than accessed via a `process_control.` prefix,
+   matching the pattern Task 1 established: the test suite patches these
+   two names directly on `routes_control` (`monkeypatch.setattr(
+   routes_control, "find_fcc_server_executable", ...)`), which only works
+   if the handler body resolves the bare name from this module's own
+   globals at call time -- exactly what a plain function-body reference
+   does. `None` from `find_fcc_server_executable()` means FCC isn't
+   installed on this machine -- a normal, expected outcome for a user who
+   hasn't set it up yet, not a server error, so it's still a `200`
+   (`"executable_not_found"`, `pid: null`). A `launch_detached()` call
+   that raises `OSError` (e.g. the executable vanished between the lookup
+   and the launch, or isn't actually executable) is caught and reported
+   as `"launch_failed"`, `pid: null`, also `200` -- not an opaque 500.
+   Otherwise `launch_detached()` starts it and its PID plus the current
+   timestamp (`now_utc_iso8601`, Phase 1) are persisted into
+   `process_state` via a conditional `UPDATE ... WHERE id = 1 AND pid IS
+   NULL` so a later call can find it again -- see `_start_lock` below for
+   why that conditional write exists.
 
 `async def` because step 2 awaits `_check_fcc_health()`, matching
 `routes_status.py`'s handler.
@@ -70,7 +87,12 @@ time can be mid-flight through it. The conditional persist
 not a replacement for it: if the write still finds a PID already present
 (shouldn't happen with the lock, but the contract doesn't rely on that),
 the process we just launched is terminated to avoid leaving it orphaned,
-and `"already_running"` is returned with the PID that beat us to it.
+and `"already_running"` is returned with the PID that beat us to it. Step
+4 above is what makes this a correct signal to act on: it guarantees the
+row is genuinely `NULL` by the time this write runs (a stale PID was
+already cleared there), so a `rowcount == 0` here can only mean the one
+case it's meant to catch -- a second request's write landing in between
+-- never a leftover stale PID.
 
 Note: `_start_lock` does NOT cover a concurrent start-vs-stop race. `start`
 runs on the asyncio event loop; `stop` is a plain `def` and therefore runs
@@ -220,6 +242,23 @@ async def start_fcc(
                 pid = None
             return ControlResponse(action="already_running", pid=pid)
 
+        stale_pid = _persisted_pid(db)
+        if stale_pid is not None:
+            if is_tracked_fcc_process(stale_pid):
+                # Health check just said "down" but the persisted PID
+                # still checks out as a live fcc-server -- a
+                # health-check-vs-persisted-state race. Trust the PID
+                # rather than launching a second instance.
+                return ControlResponse(action="already_running", pid=stale_pid)
+            # Dead PID left behind by a crash, or by a stop_failed retry
+            # that deliberately preserved it -- not the "a concurrent
+            # request beat us" case the conditional UPDATE below exists
+            # for. Clear it now so that check stays a correct
+            # compare-and-swap against a genuinely NULL row instead of
+            # misreading this stale PID as a concurrent winner and
+            # self-killing the process launched below.
+            _clear_process_state(db)
+
         executable = find_fcc_server_executable()
         if executable is None:
             return ControlResponse(action="executable_not_found", pid=None)
@@ -254,7 +293,9 @@ def _clear_process_state(db: sqlite3.Connection) -> None:
     `started_at` both `NULL`). Called whenever `/control/stop` concludes
     there is nothing left to track -- whether because it just stopped the
     process itself, or because the persisted PID was already stale or
-    unverifiable.
+    unverifiable -- and also by `start_fcc` when it finds a stale,
+    untracked PID on file that needs clearing before it can launch (see
+    step 4 in the module docstring).
     """
     db.execute(
         "UPDATE process_state SET pid = NULL, started_at = NULL WHERE id = 1"

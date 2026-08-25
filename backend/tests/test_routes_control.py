@@ -101,6 +101,51 @@ def test_start_flushes_collector_before_acting(client_and_db, monkeypatch, tmp_p
     assert after["last_run_at"] is not None
 
 
+def test_start_with_stale_untracked_pid_clears_it_and_launches_successfully(
+    client_and_db, monkeypatch
+):
+    """Finding A: a stale, non-NULL PID on file (a crashed fcc-server, or
+    one left behind by a stop_failed retry) must not be mistaken for "a
+    concurrent request beat us" -- that misreading terminates the process
+    just launched and reports a dead PID as already_running, forever. The
+    conditional `WHERE pid IS NULL` write only matches a genuinely NULL
+    row, so a stale non-NULL PID must be cleared (once confirmed untracked
+    via is_tracked_fcc_process) before that write is even attempted."""
+    client, db = client_and_db
+    db.execute(
+        "UPDATE process_state SET pid = ?, started_at = ?",
+        (1001, "2026-08-25T00:00:00.000Z"),
+    )
+    db.commit()
+
+    import fcc_dashboard.routes_control as routes_control
+
+    _patch_health(monkeypatch, raise_error=True)
+    monkeypatch.setattr(routes_control, "is_tracked_fcc_process", lambda pid: False)
+    monkeypatch.setattr(
+        routes_control,
+        "find_fcc_server_executable",
+        lambda: Path("/fake/fcc-server"),
+    )
+    monkeypatch.setattr(routes_control, "launch_detached", lambda executable: 2002)
+
+    terminate_calls = []
+    monkeypatch.setattr(
+        routes_control,
+        "terminate_process",
+        lambda pid, **kwargs: terminate_calls.append(pid) or True,
+    )
+
+    response = client.post("/control/start")
+
+    assert response.status_code == 200
+    assert response.json() == {"action": "started", "pid": 2002}
+    assert terminate_calls == []
+
+    row = db.execute("SELECT pid FROM process_state").fetchone()
+    assert row["pid"] == 2002
+
+
 def test_stop_when_not_running(client_and_db):
     client, _db = client_and_db
     response = client.post("/control/stop")
