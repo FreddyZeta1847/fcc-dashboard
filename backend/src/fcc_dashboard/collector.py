@@ -35,16 +35,20 @@ where `completed` arrives with no prior `request.sent` for that
 case (`request.sent` arrives first and sets `provider`) is unaffected.
 """
 
+import asyncio
 import hashlib
 import logging
 import sqlite3
 from pathlib import Path
+
+from starlette.concurrency import run_in_threadpool
 
 from fcc_dashboard.datetime_utils import (
     now_utc_iso8601,
     parse_fcc_timestamp,
     to_utc_iso8601,
 )
+from fcc_dashboard.dependencies import get_fcc_log_path
 from fcc_dashboard.log_parser import parse_log_line
 
 logger = logging.getLogger(__name__)
@@ -431,3 +435,101 @@ def poll_once(conn: sqlite3.Connection, log_path: str | Path) -> int:
     conn.commit()
 
     return applied_count
+
+
+# How often the background loop below re-polls the FCC log once it's
+# caught up (REG-001). 5 seconds balances "the dashboard feels live" against
+# not hammering the filesystem/DB on every tick when nothing new has been
+# written -- poll_once itself is cheap (a stat + a bounded read) when there's
+# nothing new to read, so a fairly tight interval costs little.
+POLL_INTERVAL_SECONDS = 5.0  # REG-001
+
+
+async def run_collector_loop(
+    db: sqlite3.Connection, interval: float = POLL_INTERVAL_SECONDS
+) -> None:
+    """Forever-loop that turns `poll_once` into the "future scheduler" its
+    own docstring describes: call it once immediately (the "startup
+    catch-up read" -- whatever FCC wrote while the dashboard was down or
+    between server restarts), then again every `interval` seconds.
+
+    There is deliberately no separate "first call" code path: the loop body
+    below does the poll BEFORE the sleep on every single iteration, so the
+    very first iteration already *is* the catch-up read -- satisfied by
+    construction, not by a special-cased extra call before the loop starts.
+
+    `get_fcc_log_path()` is re-resolved fresh on every iteration rather than
+    once outside the loop. This costs nothing (it's just an env-var read)
+    and keeps the loop correct if `FCC_LOG_PATH` is ever changed while this
+    process is running, instead of the loop being stuck polling a path that
+    was only correct at startup.
+
+    `poll_once` runs through `run_in_threadpool` because it's fully
+    synchronous file I/O + SQLite work (per its own docstring) -- calling it
+    directly here would block this coroutine's event loop for the duration
+    of a large catch-up read, stalling every other request the API serves
+    concurrently on the same loop. This mirrors how `routes_control.py`'s
+    `start_fcc`/`stop_fcc` already dispatch the very same function.
+
+    `poll_once` and `get_fcc_log_path` are both called as bare names that
+    resolve through this module's own globals at call time (not captured
+    into a closure or a default argument at import/def time), which is what
+    lets a test's `monkeypatch.setattr(collector, "poll_once", ...)` /
+    `monkeypatch.setattr(collector, "get_fcc_log_path", ...)` actually take
+    effect on each call -- the same reasoning `routes_status._check_fcc_health`
+    established elsewhere in this codebase, just within a single module here
+    since both names already live in `collector`'s own namespace.
+
+    No explicit `try/except` wraps the `poll_once` call itself: per its own
+    docstring/tests, `poll_once` already never raises on a missing file, a
+    malformed line, or a transient filesystem error -- it only ever raises
+    on a genuine database failure (e.g. a locked DB), which SHOULD abort
+    this poll loudly rather than be silently retried forever. There IS a
+    `try/except asyncio.CancelledError` around the poll below, but it exists
+    to make cancellation SAFER, not to swallow it -- see the next paragraph.
+
+    The poll is deliberately not a plain `await
+    run_in_threadpool(poll_once, db, log_path)`. `lifespan` (api.py) stops
+    this loop with a raw `task.cancel()` + `await task`, expecting that
+    `await` to genuinely block until any in-flight poll has finished, so
+    `app.state.db.close()` right after it can never race a poll still
+    writing to that same connection on a worker thread (see BACKEND--resilience
+    and api.py's module docstring). `run_in_threadpool` is built on
+    `anyio.to_thread.run_sync(..., abandon_on_cancel=False)`, whose
+    docstring promises exactly that guarantee -- but that promise only
+    holds when cancellation flows through anyio's own `CancelScope`
+    machinery. A bare `asyncio.Task.cancel()` on a task created via plain
+    `asyncio.create_task` (which is what `lifespan` uses, and deliberately
+    so -- see api.py) bypasses that machinery entirely: empirically, the
+    `await run_in_threadpool(...)` call raises `CancelledError` and returns
+    immediately while the underlying worker thread keeps running detached
+    in the background, wholly unsupervised. In production this file always
+    exists (FCC always has a real log), so this was already reproducing
+    intermittently as a genuine `sqlite3` access violation under `pytest`
+    on this codebase: the abandoned thread's `poll_once` call would still
+    be mid-`conn.commit()` on `db` when `lifespan`'s `finally` block reached
+    `app.state.db.close()` on another thread, colliding with it.
+    `asyncio.shield` fixes this the direct way: it detaches the poll's
+    future from the outer cancellation so the future itself is never
+    touched by `task.cancel()`, and if `CancelledError` does land here
+    (because our own await of the shielded future got cancelled), the
+    `except` block explicitly awaits that same future to its real
+    completion before re-raising -- so the poll is always allowed to
+    actually finish, and the caller's `await collector_task` still only
+    returns once it truly has. `CancelledError` is re-raised, never
+    swallowed, so it still propagates out of this coroutine exactly as
+    `lifespan`'s shutdown expects -- see the docstring of `api.lifespan` for
+    why the ordering versus `app.state.db.close()` matters. The later
+    `await asyncio.sleep(interval)` has no such wrapping: an ordinary sleep
+    has nothing in flight to protect, so a cancellation landing there is
+    left to propagate immediately and normally.
+    """
+    while True:
+        log_path = get_fcc_log_path()
+        poll_future = asyncio.ensure_future(run_in_threadpool(poll_once, db, log_path))
+        try:
+            await asyncio.shield(poll_future)
+        except asyncio.CancelledError:
+            await poll_future
+            raise
+        await asyncio.sleep(interval)

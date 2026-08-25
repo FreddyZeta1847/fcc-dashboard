@@ -12,6 +12,7 @@ client:`), which is what actually runs FastAPI's lifespan, unlike
 instantiating `TestClient(app)` directly.
 """
 
+import asyncio
 import sqlite3
 
 from fastapi.testclient import TestClient
@@ -101,6 +102,33 @@ def test_lifespan_leaves_tracked_pid_untouched_at_startup(tmp_path, monkeypatch)
 
     assert row["pid"] == 13579
     assert row["started_at"] == "2026-08-25T00:00:00.000Z"
+
+
+def test_lifespan_starts_and_cancels_the_collector_loop(monkeypatch, tmp_path):
+    calls = []
+
+    async def fake_run_collector_loop(db, interval=5.0):
+        try:
+            while True:
+                calls.append(1)
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            calls.append("cancelled")
+            raise
+
+    import fcc_dashboard.api as api
+
+    monkeypatch.setattr(api.collector, "run_collector_loop", fake_run_collector_loop)
+    monkeypatch.setenv("FCC_DASHBOARD_DB_PATH", str(tmp_path / "test.db"))
+
+    with TestClient(app) as client:
+        response = client.get("/status")
+        assert response.status_code == 200
+
+    # By the time the `with` block exits, lifespan's shutdown path has
+    # run -- the loop must have been cancelled, not left dangling.
+    assert "cancelled" in calls
+    assert len(calls) >= 2  # proves the fake loop actually ran at least once before cancellation
 
 
 def test_openapi_route_set_is_complete():

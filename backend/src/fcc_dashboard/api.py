@@ -21,6 +21,25 @@ Phase 3's later tasks and Phase 4/5 all build on). Owns two things:
   identity check would also catch it, but reconciling at startup means a
   wrong PID never sits around waiting to be misread as "ours" in the
   first place.
+  After that, `lifespan` starts `collector.run_collector_loop` as a
+  background `asyncio.create_task` -- this is what actually schedules
+  `poll_once` (Phase 2) to run at all: before this, `poll_once` only ever
+  ran as a side effect of `POST /control/start`/`/control/stop`'s
+  flush-before-action step, so the dashboard showed nothing new during
+  ordinary browsing unless a user happened to click Start or Stop. The
+  loop's own first action is the poll itself (not a sleep), which is what
+  gives every startup its "catch-up read" of whatever FCC logged while
+  the dashboard was down -- see `collector.run_collector_loop`'s
+  docstring. Using `asyncio.create_task` (not `await`-ing it directly)
+  is what lets it run concurrently with request handling on the same
+  event loop, since `poll_once` runs off-thread via `run_in_threadpool`
+  inside the loop and never blocks it for long. On shutdown, the `finally`
+  block cancels this task and awaits it (suppressing the
+  `asyncio.CancelledError` that produces) BEFORE closing
+  `app.state.db` -- in that order, deliberately: the loop shares that same
+  connection, so closing the DB first could let an in-flight
+  `poll_once` call hit a closed-connection error instead of just being
+  cleanly cancelled.
 - The dependency-provider functions routes use (`Depends(get_db)`, etc.)
   to reach shared resources without touching `app.state` directly. These
   actually live in `dependencies.py` -- a leaf module with no import from
@@ -39,6 +58,8 @@ imported and included normally, at the top of this file, since
 reason to delay it.
 """
 
+import asyncio
+import contextlib
 import os
 import sqlite3
 from contextlib import asynccontextmanager
@@ -47,6 +68,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from . import (
+    collector,
     routes_control,
     routes_db,
     routes_pricing,
@@ -115,14 +137,22 @@ def _reconcile_process_state(db: sqlite3.Connection) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Open the on-disk DB on startup; close it on shutdown."""
+    """Open the on-disk DB on startup, start the background collector loop,
+    then reverse both cleanly on shutdown -- see the module docstring's
+    `lifespan` section for why the collector task is cancelled before
+    `app.state.db.close()`, not after.
+    """
     db_path = _resolve_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     app.state.db = init_db(db_path)
     _reconcile_process_state(app.state.db)
+    collector_task = asyncio.create_task(collector.run_collector_loop(app.state.db))
     try:
         yield
     finally:
+        collector_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await collector_task
         app.state.db.close()
 
 

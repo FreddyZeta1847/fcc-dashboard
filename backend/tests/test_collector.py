@@ -1,6 +1,8 @@
 """Unit tests for backend.fcc_dashboard.collector's apply_trace_event."""
 
+import asyncio
 import builtins
+import contextlib
 import json
 import sqlite3
 from pathlib import Path
@@ -588,3 +590,48 @@ def test_poll_once_returns_zero_on_oserror(conn, tmp_path, monkeypatch, caplog):
         "SELECT last_offset FROM collector_state WHERE id = 1"
     ).fetchone()
     assert state["last_offset"] == 0
+
+
+def test_run_collector_loop_polls_immediately_and_again_after_interval(monkeypatch, tmp_path):
+    call_count = 0
+
+    def fake_poll_once(conn, log_path):
+        nonlocal call_count
+        call_count += 1
+        return 0
+
+    monkeypatch.setattr(collector_module, "poll_once", fake_poll_once)
+    monkeypatch.setattr(collector_module, "get_fcc_log_path", lambda: tmp_path / "server.log")
+
+    db = init_db(":memory:")
+
+    async def run():
+        task = asyncio.create_task(collector_module.run_collector_loop(db, interval=0.01))
+        await asyncio.sleep(0.035)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+
+    # At interval=0.01s over ~0.035s: one immediate call plus at least
+    # two more ticks -- assert loosely (>= 2) to avoid timing flakiness,
+    # but this must be strictly more than 1 to prove the loop actually
+    # re-polls on a timer, not just once at startup.
+    assert call_count >= 2
+
+
+def test_run_collector_loop_can_be_cancelled_cleanly(monkeypatch, tmp_path):
+    monkeypatch.setattr(collector_module, "poll_once", lambda conn, log_path: 0)
+    monkeypatch.setattr(collector_module, "get_fcc_log_path", lambda: tmp_path / "server.log")
+    db = init_db(":memory:")
+
+    async def run():
+        task = asyncio.create_task(collector_module.run_collector_loop(db, interval=0.01))
+        await asyncio.sleep(0.02)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert task.cancelled() or task.done()
+
+    asyncio.run(run())
