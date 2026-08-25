@@ -15,6 +15,13 @@
  * downstream_model "deepseek-chat" makes "deepseek" a substring of both,
  * so two separate cells give a text query on /deepseek/i two matching
  * elements instead of one.
+ *
+ * `isError` is checked before the `isLoading || !data` guard: on a fetch
+ * failure `data` stays undefined the same way it does while genuinely
+ * loading, so without a separate error branch this panel would look stuck
+ * on "Loading…" forever (silently re-polling) instead of surfacing the
+ * failure — see MoneySavedHeadline.tsx for the matching rationale and the
+ * concrete backend failure path (GET /stats' documented ValueError-as-500).
  */
 import { useRecentRequests } from '../hooks/useRecentRequests'
 import type { RequestRow } from '../api/types'
@@ -57,8 +64,11 @@ function RequestTableRow({ row }: { row: RequestRow }) {
 }
 
 export function RecentRequestsFeed() {
-  const { data, isLoading } = useRecentRequests(20)
+  const { data, isLoading, isError } = useRecentRequests(20)
 
+  if (isError) {
+    return <div className="p-4 text-red-600">Couldn't load recent requests.</div>
+  }
   if (isLoading || !data) {
     return <div className="p-4">Loading recent requests…</div>
   }

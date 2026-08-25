@@ -53,4 +53,11 @@ describe('MoneySavedHeadline', () => {
     renderWithClient(<MoneySavedHeadline />)
     await waitFor(() => expect(screen.getByText(/3/)).toBeInTheDocument())
   })
+
+  it('renders an error message, not a stuck loading state, when the /stats fetch fails', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValue(new Response('boom', { status: 500 }))
+    renderWithClient(<MoneySavedHeadline />)
+    await waitFor(() => expect(screen.getByText(/couldn't load savings/i)).toBeInTheDocument())
+    expect(screen.queryByText(/loading savings/i)).not.toBeInTheDocument()
+  })
 })

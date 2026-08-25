@@ -12,6 +12,13 @@
  * engine (see backend/src/fcc_dashboard's pricing code): never assume
  * free. So the null branch renders a distinct "no pricing configured"
  * message and deliberately avoids any $/0.00-shaped text.
+ *
+ * `isError` is checked before the `isLoading || !data` guard: GET /stats has
+ * a documented, reachable 500 (routes_stats.py deliberately lets
+ * compute_savings raise ValueError for an unconfigured gateway_model rather
+ * than swallowing it), and once loading finishes `data` stays undefined on
+ * failure too — so without a separate error branch this panel would look
+ * stuck on "Loading…" forever instead of surfacing the failure.
  */
 import { useStats } from '../hooks/useStats'
 
@@ -21,8 +28,11 @@ const currencyFormatter = new Intl.NumberFormat('en-US', {
 })
 
 export function MoneySavedHeadline() {
-  const { data, isLoading } = useStats('last_7_days')
+  const { data, isLoading, isError } = useStats('last_7_days')
 
+  if (isError) {
+    return <div className="p-4 text-red-600">Couldn't load savings.</div>
+  }
   if (isLoading || !data) {
     return <div className="p-4">Loading savings…</div>
   }

@@ -71,4 +71,11 @@ describe('RecentRequestsFeed', () => {
     await waitFor(() => expect(screen.getByText(/deepseek/i)).toBeInTheDocument())
     expect(screen.queryByText(/estimated/i)).not.toBeInTheDocument()
   })
+
+  it('renders an error message, not a stuck loading state, when the fetch fails', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValue(new Response('boom', { status: 500 }))
+    renderWithClient(<RecentRequestsFeed />)
+    await waitFor(() => expect(screen.getByText(/couldn't load recent requests/i)).toBeInTheDocument())
+    expect(screen.queryByText(/loading recent requests/i)).not.toBeInTheDocument()
+  })
 })
