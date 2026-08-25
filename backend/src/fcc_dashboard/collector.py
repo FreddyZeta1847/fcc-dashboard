@@ -258,7 +258,12 @@ def poll_once(conn: sqlite3.Connection, log_path: str | Path) -> int:
     current_size = log_path.stat().st_size
     with open(log_path, "rb") as f:
         head_bytes = f.read(_HEAD_FINGERPRINT_BYTES)
-    new_head_hash = _hash_bytes(head_bytes)
+    # Bound the hashed region to current_size: a writer appending between the
+    # stat() above and this read can make head_bytes longer than current_size
+    # while the file is still under the fingerprint window, which would
+    # otherwise store a hash covering more bytes than the next poll's
+    # comparison_window expects and falsely declare truncation.
+    new_head_hash = _hash_bytes(head_bytes[: min(current_size, _HEAD_FINGERPRINT_BYTES)])
 
     # Only the portion of the file we'd already seen last poll is safe to
     # compare -- see the docstring's "ramp-up" note.
@@ -323,19 +328,31 @@ def poll_once(conn: sqlite3.Connection, log_path: str | Path) -> int:
                 try:
                     apply_trace_event(conn, event)
                     applied_count += 1
-                except (ValueError, TypeError, KeyError) as exc:
+                except (
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    sqlite3.InterfaceError,
+                    sqlite3.ProgrammingError,
+                ) as exc:
                     # BACKEND--resilience: "skip the line, log a warning,
                     # keep going" -- one bad line must never crash the
-                    # collector loop. Only data-shape failures are caught
-                    # here; anything else (notably sqlite3.Error, e.g. a
-                    # locked database) is a real infrastructure problem,
-                    # not a bad line, and is allowed to propagate. Every
-                    # event applied earlier in this same poll already
-                    # committed (apply_trace_event commits per-event), so
-                    # aborting here loses nothing already-applied; the
-                    # collector_state UPDATE below simply never runs, so
-                    # the next poll retries from this same last_offset --
-                    # idempotent, no data loss, no double-counting.
+                    # collector loop. InterfaceError/ProgrammingError are
+                    # sqlite3.Error subclasses, but a bad parameter binding
+                    # (e.g. a list where an int was expected) is a
+                    # data-shape failure wearing a sqlite3 costume -- left
+                    # uncaught, the same malformed line would fail on every
+                    # retry forever, since last_offset would never advance
+                    # past it. OperationalError/DatabaseError/IntegrityError
+                    # (a locked DB, a real infrastructure fault) are
+                    # deliberately left uncaught: those aren't a bad line,
+                    # they're a real problem, and should abort the poll
+                    # loudly. Either way, aborting loses nothing already
+                    # applied earlier in this same poll (apply_trace_event
+                    # commits per-event); the collector_state UPDATE below
+                    # simply never runs, so the next poll retries cleanly
+                    # from this same last_offset -- idempotent, no data
+                    # loss, no double-counting.
                     logger.warning(
                         "Skipping malformed trace event in %s "
                         "(event=%r, request_id=%r): %s",
