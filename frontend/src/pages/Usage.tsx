@@ -1,13 +1,13 @@
 /*
  * Usage.tsx
- * Usage page. Unlike every self-fetching component from Phases 5-6a, this
- * page OWNS the selected RangeName (local useState, defaulting to
+ * Usage page. Unlike self-fetching panel components elsewhere, this page
+ * OWNS the selected RangeName (local useState, defaulting to
  * 'last_7_days' to match Overview's MoneySavedHeadline) and the single
- * useStats(range) call. The two VolumeChart instances mount here as
- * simple, prop-driven children that consume this SAME query result — they
- * must react to the range RangeSelector just picked, not independently
- * guess at one, so fetching is deliberately centralized here rather than
- * delegated back down.
+ * useStats(range) call. CumulativeSavingsChart and both VolumeChart
+ * instances mount here as simple, prop-driven children that consume this
+ * SAME query result — they must react to the range RangeSelector just
+ * picked, not independently guess at one, so fetching is deliberately
+ * centralized here rather than delegated back down.
  *
  * `isError` is checked before the `isLoading || !data` guard, same
  * panel-local-error pattern as MoneySavedHeadline.tsx/
@@ -24,6 +24,8 @@ import { useState } from 'react'
 import { useStats } from '../hooks/useStats'
 import { RangeSelector } from '../components/RangeSelector'
 import { VolumeChart } from '../components/VolumeChart'
+import { CumulativeSavingsChart } from '../components/CumulativeSavingsChart'
+import { Card } from '../components/Card'
 import type { RangeName } from '../api/types'
 
 export function Usage() {
@@ -31,22 +33,41 @@ export function Usage() {
   const { data, isLoading, isError } = useStats(range)
 
   return (
-    <div className="flex flex-col gap-4 p-4">
-      <RangeSelector value={range} onChange={setRange} />
+    <div style={{ maxWidth: 1060 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20, marginBottom: 28, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.02em' }}>Usage</div>
+          <div style={{ color: 'var(--muted)' }}>Request and token volume over time</div>
+        </div>
+        <RangeSelector value={range} onChange={setRange} />
+      </div>
+
       {isError ? (
-        <div className="p-4 text-red-600">Couldn't load usage data.</div>
+        <Card accent="red">
+          <p style={{ color: 'var(--red)' }}>Couldn't load usage data.</p>
+        </Card>
       ) : isLoading || !data ? (
-        <div className="p-4">Loading usage data…</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <Card style={{ height: 220 }} />
+          <Card style={{ height: 260 }} />
+        </div>
       ) : (
-        <div className="flex flex-col gap-6">
-          <VolumeChart
-            data={data.volume_by_provider.map((v) => ({ label: v.provider, ...v }))}
-            groupLabel="By Provider"
-          />
-          <VolumeChart
-            data={data.volume_by_model.map((v) => ({ label: `${v.provider} / ${v.model}`, ...v }))}
-            groupLabel="By Model"
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <Card accent="green">
+            <CumulativeSavingsChart data={data.daily_savings} />
+          </Card>
+          <Card accent="violet">
+            <VolumeChart
+              data={data.volume_by_provider.map((v) => ({ label: v.provider, ...v }))}
+              groupLabel="By Provider"
+            />
+          </Card>
+          <Card accent="amber">
+            <VolumeChart
+              data={data.volume_by_model.map((v) => ({ label: `${v.provider} / ${v.model}`, ...v }))}
+              groupLabel="By Model"
+            />
+          </Card>
         </div>
       )}
     </div>

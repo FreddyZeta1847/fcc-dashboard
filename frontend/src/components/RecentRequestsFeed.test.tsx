@@ -4,6 +4,12 @@
  * critically, that the estimated-timestamp marker keys off truthiness of
  * `occurred_at_is_estimated` (a raw 0/1 integer from SQLite, not a JSON
  * boolean) rather than a strict `=== true` check that would never match.
+ *
+ * Provider ("deepseek") and downstream_model ("deepseek-chat") render in
+ * separate cells (matching the approved design's grid columns) — an
+ * exact-string `getByText('deepseek')` is used rather than a `/deepseek/i`
+ * regex where that would otherwise ambiguously match both cells (the
+ * model cell's text is "deepseek-chat", a substring superset).
  */
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -40,7 +46,7 @@ describe('RecentRequestsFeed', () => {
       ),
     )
     renderWithClient(<RecentRequestsFeed />)
-    await waitFor(() => expect(screen.getByText(/deepseek/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('deepseek')).toBeInTheDocument())
   })
 
   it('visually marks a row whose timestamp is estimated', async () => {
@@ -68,7 +74,7 @@ describe('RecentRequestsFeed', () => {
       ),
     )
     renderWithClient(<RecentRequestsFeed />)
-    await waitFor(() => expect(screen.getByText(/deepseek/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('deepseek')).toBeInTheDocument())
     expect(screen.queryByText(/estimated/i)).not.toBeInTheDocument()
   })
 

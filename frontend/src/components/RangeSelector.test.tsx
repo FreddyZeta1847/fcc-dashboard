@@ -2,8 +2,9 @@
  * RangeSelector.test.tsx
  * Behavioral tests for RangeSelector: all 4 range buttons render, clicking
  * a button calls onChange with the matching RangeName, and the active
- * range is visually distinguished from inactive ones (className check,
- * mirroring Nav.tsx's active/inactive pattern).
+ * range is visually distinguished from inactive ones. Active/inactive is
+ * expressed via inline style (CSS custom properties), not a Tailwind
+ * className, so the check compares the rendered `style` attribute.
  */
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
@@ -30,6 +31,6 @@ describe('RangeSelector', () => {
     render(<RangeSelector value="today" onChange={vi.fn()} />)
     const active = screen.getByRole('button', { name: /^today$/i })
     const inactive = screen.getByRole('button', { name: /last 7 days/i })
-    expect(active.className).not.toBe(inactive.className)
+    expect(active.getAttribute('style')).not.toBe(inactive.getAttribute('style'))
   })
 })

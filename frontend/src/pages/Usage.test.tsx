@@ -24,6 +24,7 @@ const emptyStats = {
   total_requests: 0, completed_requests: 0, error_requests: 0, pending_requests: 0,
   total_input_tokens: 0, total_output_tokens: 0, total_savings: null,
   unpriced_request_count: 0, by_provider: [], volume_by_provider: [], volume_by_model: [],
+  daily_savings: [],
 }
 
 describe('Usage', () => {

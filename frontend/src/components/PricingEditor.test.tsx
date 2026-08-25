@@ -3,11 +3,16 @@
  * Tests for the pricing config editor: (1) it renders every configured
  * (provider, model) price pair from usePricing(), and (2) the manual
  * add/edit form requires a two-step confirm before it ever calls
- * usePutPricing()'s mutate function — the first "Save" click must NOT
- * fire the PUT, only a follow-up "Confirm" click may.
+ * usePutPricing()'s mutate function — the first "Save price" click must
+ * NOT fire the PUT, only a follow-up click on the ConfirmDialog's own
+ * action button may. The dialog's confirm button shares the same
+ * accessible name ("Save price") as the form's own trigger button
+ * (matching the approved design's action-specific confirm labels, not a
+ * generic "Confirm"), so tests scope the dialog's button via its
+ * `role="dialog"` container rather than a name-based query alone.
  */
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PricingEditor } from './PricingEditor'
@@ -55,8 +60,8 @@ describe('PricingEditor', () => {
 
     await user.type(screen.getByLabelText(/provider/i), 'kimi')
     await user.type(screen.getByLabelText(/model/i), 'kimi-k2')
-    await user.type(screen.getByLabelText(/input.*per million/i), '0.6')
-    await user.type(screen.getByLabelText(/output.*per million/i), '2.5')
+    await user.type(screen.getByLabelText(/input.*mtok/i), '0.6')
+    await user.type(screen.getByLabelText(/output.*mtok/i), '2.5')
     await user.click(screen.getByRole('button', { name: /save/i }))
 
     // First click should ask for confirmation, not fire the write yet.
@@ -64,7 +69,8 @@ describe('PricingEditor', () => {
       (global.fetch as ReturnType<typeof vi.fn>).mock.calls.some(([, init]) => init?.method === 'PUT'),
     ).toBe(false)
 
-    await user.click(screen.getByRole('button', { name: /confirm/i }))
+    const dialog = screen.getByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: /save price/i }))
     await waitFor(() =>
       expect(
         (global.fetch as ReturnType<typeof vi.fn>).mock.calls.some(([, init]) => init?.method === 'PUT'),
@@ -87,11 +93,11 @@ describe('PricingEditor', () => {
     await user.type(screen.getByLabelText(/provider/i), 'kimi')
     await user.type(screen.getByLabelText(/model/i), 'kimi-k2')
     // Input price left blank on purpose.
-    await user.type(screen.getByLabelText(/output.*per million/i), '2.5')
+    await user.type(screen.getByLabelText(/output.*mtok/i), '2.5')
     await user.click(screen.getByRole('button', { name: /save/i }))
 
-    // No Confirm step should even appear, and the PUT must never fire.
-    expect(screen.queryByRole('button', { name: /confirm/i })).not.toBeInTheDocument()
+    // No confirm dialog should even appear, and the PUT must never fire.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(
       (global.fetch as ReturnType<typeof vi.fn>).mock.calls.some(([, init]) => init?.method === 'PUT'),
     ).toBe(false)

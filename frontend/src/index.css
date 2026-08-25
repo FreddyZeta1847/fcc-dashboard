@@ -1,2 +1,103 @@
-/* Tailwind CSS entry point — imported once in main.tsx. */
+/*
+ * index.css
+ * Tailwind entry point plus this project's design tokens — a dark/light
+ * palette expressed as CSS custom properties (ported from the approved
+ * design mockup), so every component can reference `var(--card)` etc.
+ * directly instead of duplicating raw color values. `:root` holds the
+ * dark palette (this app's default look); `:root[data-theme='light']`
+ * overrides it — see hooks/useTheme.ts for how that attribute gets set.
+ */
 @import "tailwindcss";
+
+:root {
+  --bg: #0c0e13;
+  --panel: #10131a;
+  --card: #151a24;
+  --card2: #1c2230;
+  --border: #242c3c;
+  --border2: #2e3850;
+  --text: #e9ecf2;
+  --muted: #98a1b3;
+  --faint: #687182;
+
+  --green: oklch(0.8 0.15 160);
+  --blue: oklch(0.79 0.12 250);
+  --violet: oklch(0.78 0.13 300);
+  --amber: oklch(0.83 0.14 80);
+  --red: oklch(0.72 0.16 25);
+
+  --greenT: oklch(0.21 0.035 160);
+  --blueT: oklch(0.21 0.035 250);
+  --violetT: oklch(0.21 0.035 300);
+  --amberT: oklch(0.21 0.03 80);
+  --redT: oklch(0.2 0.04 25);
+
+  --greenB: oklch(0.34 0.06 160);
+  --blueB: oklch(0.34 0.06 250);
+  --violetB: oklch(0.34 0.06 300);
+  --amberB: oklch(0.34 0.05 80);
+  --redB: oklch(0.32 0.07 25);
+}
+
+:root[data-theme="light"] {
+  --bg: #f3f4f8;
+  --panel: #ffffff;
+  --card: #ffffff;
+  --card2: #eef0f6;
+  --border: #e2e6ef;
+  --border2: #cdd4e2;
+  --text: #1b2130;
+  --muted: #5b6474;
+  --faint: #8a92a4;
+
+  --green: oklch(0.55 0.14 160);
+  --blue: oklch(0.55 0.13 250);
+  --violet: oklch(0.55 0.14 300);
+  --amber: oklch(0.6 0.13 80);
+  --red: oklch(0.55 0.17 25);
+
+  --greenT: oklch(0.96 0.025 160);
+  --blueT: oklch(0.96 0.02 250);
+  --violetT: oklch(0.96 0.02 300);
+  --amberT: oklch(0.97 0.025 80);
+  --redT: oklch(0.96 0.02 25);
+
+  --greenB: oklch(0.87 0.06 160);
+  --blueB: oklch(0.87 0.05 250);
+  --violetB: oklch(0.88 0.05 300);
+  --amberB: oklch(0.89 0.05 80);
+  --redB: oklch(0.88 0.06 25);
+}
+
+@keyframes fccPulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.9; }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Manrope", ui-sans-serif, sans-serif;
+}
+
+a {
+  color: var(--blue);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2b3345;
+  border-radius: 6px;
+}

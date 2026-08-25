@@ -1,10 +1,11 @@
 /*
  * RangeSelector.tsx
  * Controlled 4-way range toggle (today / last 7 days / last 30 days / all
- * time) for the Usage page. Stateless like Nav.tsx: the parent (Usage.tsx)
- * owns the selected RangeName and passes it down along with onChange, so
- * Usage's useStats(range) call always reflects exactly what's on screen.
- * Active/inactive styling mirrors Nav.tsx's button pattern.
+ * time) for the Usage page. Stateless like Sidebar.tsx: the parent
+ * (Usage.tsx) owns the selected RangeName and passes it down along with
+ * onChange, so Usage's useStats(range) call always reflects exactly
+ * what's on screen. A pill-button group inside a rounded outer container,
+ * matching the approved design mockup.
  */
 import type { RangeName } from '../api/types'
 
@@ -22,7 +23,16 @@ interface RangeSelectorProps {
 
 export function RangeSelector({ value, onChange }: RangeSelectorProps) {
   return (
-    <div className="flex gap-2">
+    <div
+      style={{
+        display: 'flex',
+        gap: 4,
+        background: 'var(--card)',
+        border: '1px solid var(--border)',
+        borderRadius: 12,
+        padding: 4,
+      }}
+    >
       {RANGES.map(({ id, label }) => {
         const isActive = id === value
         return (
@@ -30,11 +40,18 @@ export function RangeSelector({ value, onChange }: RangeSelectorProps) {
             key={id}
             type="button"
             onClick={() => onChange(id)}
-            className={
-              isActive
-                ? 'px-3 py-1.5 rounded bg-blue-600 text-white font-semibold'
-                : 'px-3 py-1.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }
+            style={{
+              font: 'inherit',
+              fontSize: 13,
+              fontWeight: 700,
+              padding: '7px 14px',
+              border: 'none',
+              borderRadius: 9,
+              cursor: 'pointer',
+              background: isActive ? 'var(--card2)' : 'transparent',
+              color: isActive ? 'var(--text)' : 'var(--muted)',
+              whiteSpace: 'nowrap',
+            }}
           >
             {label}
           </button>
