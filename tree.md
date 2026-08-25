@@ -25,7 +25,8 @@
 │   │       ├── routes_pricing.py
 │   │       ├── routes_requests.py
 │   │       ├── routes_stats.py
-│   │       └── routes_status.py
+│   │       ├── routes_status.py
+│   │       └── static.py
 │   ├── tests/
 │   │   ├── conftest.py
 │   │   ├── test_api.py
@@ -41,7 +42,8 @@
 │   │   ├── test_routes_pricing.py
 │   │   ├── test_routes_requests.py
 │   │   ├── test_routes_stats.py
-│   │   └── test_routes_status.py
+│   │   ├── test_routes_status.py
+│   │   └── test_static.py
 │   ├── .python-version
 │   ├── pyproject.toml
 │   ├── README.md
@@ -56,7 +58,8 @@
 │           ├── 2026-08-25-phase-4-process-control.md
 │           ├── 2026-08-25-phase-5-frontend-scaffold-overview.md
 │           ├── 2026-08-25-phase-6a-settings-database.md
-│           └── 2026-08-25-phase-6b-usage-page.md
+│           ├── 2026-08-25-phase-6b-usage-page.md
+│           └── 2026-08-25-phase-7-integration-polish.md
 ├── frontend/
 │   ├── public/
 │   │   └── favicon.svg
