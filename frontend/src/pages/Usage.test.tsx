@@ -3,6 +3,8 @@
  * Confirms Usage owns range state and the useStats(range) query: clicking
  * a RangeSelector option re-fetches /stats with the newly selected range
  * baked into the URL, proving the page (not a child) drives the query.
+ * Also confirms (Task 3) that once that same query resolves, both volume
+ * charts are mounted from it — no separate fetch per chart.
  */
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -36,5 +38,26 @@ describe('Usage', () => {
     await waitFor(() => expect(calls.some((u) => u.includes('range=last_7_days'))).toBe(true))
     await user.click(screen.getByRole('button', { name: /last 30 days/i }))
     await waitFor(() => expect(calls.some((u) => u.includes('range=last_30_days'))).toBe(true))
+  })
+
+  it('renders both volume charts, fed from the one useStats(range) result, once stats load', async () => {
+    const statsWithVolume = {
+      ...emptyStats,
+      volume_by_provider: [
+        { provider: 'deepseek', request_count: 10, input_tokens: 1000, output_tokens: 2000, estimated_count: 0 },
+      ],
+      volume_by_model: [
+        { provider: 'deepseek', model: 'deepseek-chat', request_count: 10, input_tokens: 1000, output_tokens: 2000, estimated_count: 0 },
+      ],
+    }
+    vi.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(statsWithVolume), { status: 200 }),
+    )
+    renderWithClient(<Usage />)
+
+    await waitFor(() => expect(screen.getByText('By Provider')).toBeInTheDocument())
+    expect(screen.getByText('By Model')).toBeInTheDocument()
+    expect(screen.getByText('deepseek')).toBeInTheDocument()
+    expect(screen.getByText('deepseek / deepseek-chat')).toBeInTheDocument()
   })
 })
