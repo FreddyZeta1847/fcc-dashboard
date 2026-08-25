@@ -25,9 +25,9 @@ process even exists to check. `is_tracked_fcc_process(pid)` closes the
 identity gap `is_process_alive` deliberately leaves open: before any code
 path actually *terminates* a persisted PID (or hands it back as "the PID we
 believe is fcc-server"), it must go through `is_tracked_fcc_process`, which
-additionally checks the process's name -- this is what makes a PID-reuse
-scenario (e.g. start FCC, reboot, click Stop) fail safe instead of silently
-terminating an unrelated process.
+additionally checks the process's name, executable path, and command line
+-- this is what makes a PID-reuse scenario (e.g. start FCC, reboot, click
+Stop) fail safe instead of silently terminating an unrelated process.
 
 `launch_detached(executable)` and the test-only-facing `_launch_detached_args
 (args)` share one code path deliberately: `launch_detached` is just
@@ -165,14 +165,45 @@ def is_tracked_fcc_process(pid: int) -> bool:
     belong to a completely different (and important) process by the time we act
     on it. This check exists specifically to make that unsafe -- never terminate
     a PID without first confirming it's still plausibly ours.
+
+    Checks three signals, any one of which is enough: `name()`, `exe()`, and
+    `cmdline()[0]`, all matched case-insensitively as a substring. `name()`
+    alone is not enough on POSIX: `fcc-server` is installed there as a
+    shebang script, not a compiled binary, so the kernel-reported process
+    name (what `name()` reads, e.g. via `/proc/<pid>/comm` on Linux) is the
+    *interpreter*'s name (`python3.12`), not `fcc-server` -- psutil's own
+    fallback to `cmdline()[0]` only kicks in when the raw name looks
+    truncated, which a short interpreter name doesn't trigger. `exe()` and
+    `cmdline()` are each wrapped in their own narrow exception handling,
+    separate from the `name()`/`status()` check above: a permission problem
+    or benign zombie-race on either of these two extra signals must not
+    turn an otherwise-confirmed match into a false negative, so failure to
+    read one just means that particular signal contributes nothing rather
+    than aborting the whole check.
     """
     try:
         proc = psutil.Process(pid)
         if proc.status() == psutil.STATUS_ZOMBIE:
             return False
-        return "fcc-server" in proc.name().lower()
+        if "fcc-server" in proc.name().lower():
+            return True
     except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
         return False
+
+    try:
+        if "fcc-server" in proc.exe().lower():
+            return True
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, ValueError):
+        pass
+
+    try:
+        cmdline = proc.cmdline()
+        if cmdline and "fcc-server" in cmdline[0].lower():
+            return True
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, ValueError):
+        pass
+
+    return False
 
 
 def terminate_process(pid: int, timeout: float = 5.0) -> bool:

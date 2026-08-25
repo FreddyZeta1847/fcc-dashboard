@@ -66,6 +66,43 @@ def test_lifespan_reconciles_untracked_pid_at_startup(tmp_path, monkeypatch):
     assert row["started_at"] is None
 
 
+def test_lifespan_leaves_tracked_pid_untouched_at_startup(tmp_path, monkeypatch):
+    """Finding B / positive path: the sibling of
+    test_lifespan_reconciles_untracked_pid_at_startup above. A PID that
+    is_tracked_fcc_process confirms is still fcc-server must survive
+    lifespan startup unchanged -- nothing currently proves the "good PID"
+    side of _reconcile_process_state, only the "bad PID gets cleared"
+    side."""
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("FCC_DASHBOARD_DB_PATH", str(db_path))
+    monkeypatch.setenv("FCC_DASHBOARD_PRICING_PATH", str(tmp_path / "pricing.json"))
+
+    seed_db = init_db(db_path)
+    seed_db.execute(
+        "UPDATE process_state SET pid = ?, started_at = ?",
+        (13579, "2026-08-25T00:00:00.000Z"),
+    )
+    seed_db.commit()
+    seed_db.close()
+
+    import fcc_dashboard.api as api
+
+    monkeypatch.setattr(api, "is_tracked_fcc_process", lambda pid: True)
+
+    with TestClient(app):
+        pass
+
+    check_conn = sqlite3.connect(db_path)
+    check_conn.row_factory = sqlite3.Row
+    row = check_conn.execute(
+        "SELECT pid, started_at FROM process_state"
+    ).fetchone()
+    check_conn.close()
+
+    assert row["pid"] == 13579
+    assert row["started_at"] == "2026-08-25T00:00:00.000Z"
+
+
 def test_openapi_route_set_is_complete():
     paths = set(app.openapi()["paths"])
     assert paths == {

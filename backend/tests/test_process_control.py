@@ -168,6 +168,12 @@ def test_is_tracked_fcc_process_false_for_unrelated_process_name(monkeypatch):
         def name(self):
             return "some_other_program.exe"
 
+        def exe(self):
+            return "/usr/bin/some_other_program.exe"
+
+        def cmdline(self):
+            return ["/usr/bin/some_other_program.exe"]
+
     monkeypatch.setattr(
         process_control.psutil, "Process", lambda pid: _FakeOtherProcess()
     )
@@ -212,6 +218,64 @@ def test_is_tracked_fcc_process_false_for_zombie(monkeypatch):
     )
 
     assert is_tracked_fcc_process(4242) is False
+
+
+def test_is_tracked_fcc_process_true_via_cmdline_when_name_is_interpreter(
+    monkeypatch,
+):
+    """Finding B (POSIX shebang-script case): a process launched from a
+    shebang script reports the interpreter as its name() (e.g.
+    python3.12), not fcc-server -- but cmdline()[0] is the script's own
+    path and still contains the substring. The identity check must catch
+    this via cmdline(), not just name()."""
+
+    class _FakeShebangProcess:
+        def status(self):
+            return process_control.psutil.STATUS_RUNNING
+
+        def name(self):
+            return "python3.12"
+
+        def exe(self):
+            return "/usr/bin/python3.12"
+
+        def cmdline(self):
+            return ["/home/user/.local/bin/fcc-server"]
+
+    monkeypatch.setattr(
+        process_control.psutil, "Process", lambda pid: _FakeShebangProcess()
+    )
+
+    assert is_tracked_fcc_process(4242) is True
+
+
+def test_is_tracked_fcc_process_true_when_exe_raises_access_denied_but_name_matches(
+    monkeypatch,
+):
+    """Finding B regression guard: exe() raising AccessDenied must not
+    turn an already-matching, legitimately-alive fcc-server process into
+    a false negative -- the exe()/cmdline() checks are additional
+    signals, not a replacement for the working name() check, and their
+    own exceptions must be swallowed rather than propagating."""
+
+    class _FakeProcessExeDenied:
+        def status(self):
+            return process_control.psutil.STATUS_RUNNING
+
+        def name(self):
+            return "fcc-server"
+
+        def exe(self):
+            raise process_control.psutil.AccessDenied(pid=4242)
+
+        def cmdline(self):
+            return ["/usr/bin/fcc-server"]
+
+    monkeypatch.setattr(
+        process_control.psutil, "Process", lambda pid: _FakeProcessExeDenied()
+    )
+
+    assert is_tracked_fcc_process(4242) is True
 
 
 def test_terminate_process_also_terminates_child_processes():
