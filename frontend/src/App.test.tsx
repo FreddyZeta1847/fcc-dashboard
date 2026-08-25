@@ -38,9 +38,26 @@ describe('App resilience', () => {
   })
 
   it('switches to the Settings tab on click, keeping the backend-reachable content mounted', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ fcc_status: 'up', providers: [] }), { status: 200 }),
-    )
+    const pricingConfig = {
+      anthropic: {
+        opus: { input_per_million: 15, output_per_million: 75 },
+        sonnet: { input_per_million: 3, output_per_million: 15 },
+        haiku: { input_per_million: 0.25, output_per_million: 1.25 },
+      },
+      providers: {},
+    }
+    vi.spyOn(global, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('/status')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ fcc_status: 'up', providers: [] }), { status: 200 }),
+        )
+      }
+      if (url.startsWith('/pricing')) {
+        return Promise.resolve(new Response(JSON.stringify(pricingConfig), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`))
+    })
     const user = userEvent.setup()
     renderApp()
     await waitFor(() => expect(screen.getByRole('button', { name: /settings/i })).toBeInTheDocument())
