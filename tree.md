@@ -1,13 +1,5 @@
-.
+﻿.
 ├── backend/
-│   ├── .pytest_cache/
-│   │   ├── v/
-│   │   │   └── cache/
-│   │   │       ├── lastfailed
-│   │   │       └── nodeids
-│   │   ├── .gitignore
-│   │   ├── CACHEDIR.TAG
-│   │   └── README.md
 │   ├── src/
 │   │   └── fcc_dashboard/
 │   │       ├── __init__.py
@@ -48,6 +40,7 @@
 │   ├── pyproject.toml
 │   ├── README.md
 │   └── uv.lock
+├── dashboard request test/
 ├── docs/
 │   └── superpowers/
 │       └── plans/
@@ -70,22 +63,26 @@
 │   │   │   └── types.ts
 │   │   ├── assets/
 │   │   ├── components/
+│   │   │   ├── Card.tsx
+│   │   │   ├── ConfirmDialog.tsx
+│   │   │   ├── CumulativeSavingsChart.test.tsx
+│   │   │   ├── CumulativeSavingsChart.tsx
 │   │   │   ├── MoneySavedHeadline.test.tsx
 │   │   │   ├── MoneySavedHeadline.tsx
-│   │   │   ├── Nav.test.tsx
-│   │   │   ├── Nav.tsx
 │   │   │   ├── PriceRefreshFlow.test.tsx
 │   │   │   ├── PriceRefreshFlow.tsx
 │   │   │   ├── PricingEditor.test.tsx
 │   │   │   ├── PricingEditor.tsx
-│   │   │   ├── ProcessControls.test.tsx
-│   │   │   ├── ProcessControls.tsx
 │   │   │   ├── RangeSelector.test.tsx
 │   │   │   ├── RangeSelector.tsx
 │   │   │   ├── RecentRequestsFeed.test.tsx
 │   │   │   ├── RecentRequestsFeed.tsx
+│   │   │   ├── Sidebar.test.tsx
+│   │   │   ├── Sidebar.tsx
+│   │   │   ├── Skeleton.tsx
 │   │   │   ├── StatusPanel.test.tsx
 │   │   │   ├── StatusPanel.tsx
+│   │   │   ├── Toast.tsx
 │   │   │   ├── VolumeChart.test.tsx
 │   │   │   └── VolumeChart.tsx
 │   │   ├── hooks/
@@ -95,7 +92,10 @@
 │   │   │   ├── usePricingMutations.ts
 │   │   │   ├── useRecentRequests.ts
 │   │   │   ├── useStats.ts
-│   │   │   └── useStatus.ts
+│   │   │   ├── useStatus.ts
+│   │   │   └── useTheme.ts
+│   │   ├── lib/
+│   │   │   └── processControlMessages.ts
 │   │   ├── pages/
 │   │   │   ├── Database.test.tsx
 │   │   │   ├── Database.tsx
@@ -123,6 +123,9 @@
 │   ├── tsconfig.node.json
 │   └── vite.config.ts
 ├── .gitignore
+├── .thumbnail
+├── FCC Dashboard.dc.html
 ├── PROGRESS.md
 ├── README.md
+├── support.js
 └── tree.md
