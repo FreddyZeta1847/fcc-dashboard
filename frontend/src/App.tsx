@@ -10,9 +10,8 @@
  * unconditionally on tab state — a user who switched tabs and then the
  * backend goes down must still see this screen, not a broken page — so
  * the tab useState and Nav render only past both branches, in the
- * "backend reachable" return. Task 1 adds the tab shell (Overview, Usage,
- * Settings, Database); Task 3 wires in the real Database page; Task 7
- * wires in the real Settings page.
+ * "backend reachable" return. All four tabs (Overview, Usage, Settings,
+ * Database) now mount real pages — no placeholder remains anywhere.
  */
 import { useState } from 'react'
 import { useStatus } from './hooks/useStatus'

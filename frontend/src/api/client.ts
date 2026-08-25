@@ -15,6 +15,7 @@ import type {
   ControlStopResponse,
   PricingConfig,
   PricingRefreshResponse,
+  RangeName,
   RequestsListResponse,
   StatsResponse,
   StatusResponse,
@@ -34,7 +35,7 @@ export async function getStatus(): Promise<StatusResponse> {
   return parseJsonOrThrow<StatusResponse>(response)
 }
 
-export async function getStats(range: string): Promise<StatsResponse> {
+export async function getStats(range: RangeName): Promise<StatsResponse> {
   const response = await fetch(`/stats?range=${range}`)
   return parseJsonOrThrow<StatsResponse>(response)
 }

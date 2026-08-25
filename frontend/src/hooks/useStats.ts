@@ -9,8 +9,9 @@
  */
 import { useQuery } from '@tanstack/react-query'
 import { getStats } from '../api/client'
+import type { RangeName } from '../api/types'
 
-export function useStats(range: string) {
+export function useStats(range: RangeName) {
   return useQuery({
     queryKey: ['stats', range],
     queryFn: () => getStats(range),
