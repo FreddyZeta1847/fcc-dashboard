@@ -24,6 +24,18 @@
  * — but `formatPrice` is written to hold for a future caller (e.g. a table
  * page joining live request data against pricing) that can feed it an
  * unconfigured pair.
+ *
+ * `validatePricingForm` gates handleSaveClick before it ever reaches the
+ * pending-confirm state. This is not cosmetic input hygiene: `Number('')`
+ * evaluates to `0`, not `NaN`, so an unvalidated blank price field would
+ * stage (and, on Confirm, persist) a real `$0` price entry. On the backend
+ * (`pricing.py`), `lookup_price` only returns `None` for a pair entirely
+ * absent from the config — a pair present with `0` is `not None`, so
+ * `compute_savings` treats it as priced rather than unknown, and the full
+ * Anthropic-equivalent cost gets silently counted as "savings" forever for
+ * every request routed through that pair. Blocking blank/negative/non-numeric
+ * input here is what keeps a slipped keystroke from becoming a permanent,
+ * silent accounting error on the read path.
  */
 import { useId, useState } from 'react'
 import { usePricing } from '../hooks/usePricing'
@@ -54,6 +66,27 @@ function formatPrice(value: number | undefined): string {
   return value === undefined ? 'unknown' : `$${value}`
 }
 
+function validatePricingForm(
+  provider: string,
+  model: string,
+  inputPrice: string,
+  outputPrice: string,
+): string | null {
+  if (provider.trim() === '') {
+    return 'Provider is required.'
+  }
+  if (model.trim() === '') {
+    return 'Model is required.'
+  }
+  if (inputPrice.trim() === '' || !Number.isFinite(Number(inputPrice)) || Number(inputPrice) < 0) {
+    return 'Input price must be a non-negative number.'
+  }
+  if (outputPrice.trim() === '' || !Number.isFinite(Number(outputPrice)) || Number(outputPrice) < 0) {
+    return 'Output price must be a non-negative number.'
+  }
+  return null
+}
+
 function withPairMerged(
   config: PricingConfig,
   provider: string,
@@ -81,6 +114,7 @@ export function PricingEditor() {
   const [inputPrice, setInputPrice] = useState('')
   const [outputPrice, setOutputPrice] = useState('')
   const [pendingConfirm, setPendingConfirm] = useState(false)
+  const [validationError, setValidationError] = useState<string | null>(null)
 
   const providerId = useId()
   const modelId = useId()
@@ -97,10 +131,17 @@ export function PricingEditor() {
   const rows = buildRows(data)
 
   function handleSaveClick() {
+    const error = validatePricingForm(provider, model, inputPrice, outputPrice)
+    if (error) {
+      setValidationError(error)
+      return
+    }
+    setValidationError(null)
     setPendingConfirm(true)
   }
 
   function handleCancelClick() {
+    setValidationError(null)
     setPendingConfirm(false)
   }
 
@@ -207,6 +248,12 @@ export function PricingEditor() {
             className="border border-gray-300 px-2 py-1 text-sm"
           />
         </div>
+
+        {validationError && (
+          <p className="text-sm text-red-600" role="alert">
+            {validationError}
+          </p>
+        )}
 
         {!pendingConfirm ? (
           <button

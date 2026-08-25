@@ -71,4 +71,35 @@ describe('PricingEditor', () => {
       ).toBe(true),
     )
   })
+
+  it('blocks Save when a price field is blank, and never fires the PUT', async () => {
+    vi.spyOn(global, 'fetch').mockImplementation((input, init) => {
+      const url = String(input)
+      if (url === '/pricing' && (!init || init.method === undefined)) {
+        return Promise.resolve(new Response(JSON.stringify(config), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url} ${init?.method}`))
+    })
+    const user = userEvent.setup()
+    renderWithClient(<PricingEditor />)
+    await waitFor(() => expect(screen.getByText('deepseek-chat')).toBeInTheDocument())
+
+    await user.type(screen.getByLabelText(/provider/i), 'kimi')
+    await user.type(screen.getByLabelText(/model/i), 'kimi-k2')
+    // Input price left blank on purpose.
+    await user.type(screen.getByLabelText(/output.*per million/i), '2.5')
+    await user.click(screen.getByRole('button', { name: /save/i }))
+
+    // No Confirm step should even appear, and the PUT must never fire.
+    expect(screen.queryByRole('button', { name: /confirm/i })).not.toBeInTheDocument()
+    expect(
+      (global.fetch as ReturnType<typeof vi.fn>).mock.calls.some(([, init]) => init?.method === 'PUT'),
+    ).toBe(false)
+
+    // Even trying to click through again after the blocked attempt must not fire it.
+    await user.click(screen.getByRole('button', { name: /save/i }))
+    expect(
+      (global.fetch as ReturnType<typeof vi.fn>).mock.calls.some(([, init]) => init?.method === 'PUT'),
+    ).toBe(false)
+  })
 })
