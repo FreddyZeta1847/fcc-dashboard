@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from fcc_dashboard.datetime_utils import (
+    local_date_of,
     now_utc_iso8601,
     parse_fcc_timestamp,
     resolve_range_boundaries,
@@ -137,3 +138,31 @@ def test_resolve_range_boundaries_last_30_days_crosses_dst_boundary():
     start, end = resolve_range_boundaries("last_30_days", local_tz="Europe/Rome", now=fixed_now)
     assert start == "2026-10-10T22:00:00.000Z"  # local midnight Oct 11 CEST(+2) -> UTC
     assert end == "2026-11-10T11:00:00.000Z"  # CET(+1) -> UTC
+
+
+def test_local_date_of_same_day_in_utc_and_local():
+    # 14:00 UTC on Aug 24, in Europe/Rome (+2 in summer) is still Aug 24.
+    assert local_date_of("2026-08-24T14:00:00.000Z", local_tz="Europe/Rome") == "2026-08-24"
+
+
+def test_local_date_of_rolls_over_to_next_local_day():
+    # 23:30 UTC is 01:30 the *next* local day in Europe/Rome (+2 in summer)
+    # -- this is exactly the case a naive "just take the UTC date" bug would
+    # get wrong, and the case daily bucketing depends on getting right.
+    assert local_date_of("2026-08-24T23:30:00.000Z", local_tz="Europe/Rome") == "2026-08-25"
+
+
+def test_local_date_of_crosses_dst_boundary():
+    # Same reasoning as test_resolve_range_boundaries_last_30_days_crosses_dst_boundary:
+    # 22:30 UTC on Oct 10 is CEST(+2) in Europe/Rome -> Oct 11 local, but the
+    # same UTC clock time a month later (post-DST, CET+1) would NOT roll
+    # over -- a fixed-offset implementation would get one of these two wrong.
+    assert local_date_of("2026-10-10T22:30:00.000Z", local_tz="Europe/Rome") == "2026-10-11"
+    assert local_date_of("2026-11-10T22:30:00.000Z", local_tz="Europe/Rome") == "2026-11-10"
+
+
+def test_local_date_of_uses_real_local_time_by_default():
+    # No override: must not raise, must return a real YYYY-MM-DD string.
+    result = local_date_of(now_utc_iso8601())
+    assert len(result) == 10
+    assert result[4] == "-" and result[7] == "-"

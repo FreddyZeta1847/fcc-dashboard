@@ -2,16 +2,17 @@
 `GET /stats` -- aggregate request counts, token totals, and the dashboard's
 core "money saved" number for a named time range.
 
-Two genuinely different aggregation passes run over the same fetched rows:
-`_aggregate_costs` (feeding `by_provider`) answers a money/savings question,
-so it only ever looks at priced, `status = 'completed'` rows -- an unpriced
-or pending/error row contributes nothing to it. `_aggregate_volume` (feeding
-`volume_by_provider` and `volume_by_model`, added for the frontend's Usage
-page) answers a usage/volume question instead: it counts every row in range
-regardless of status or whether pricing exists for it. They are kept as two
-separate functions on purpose -- don't merge them, and don't make one call
-the other -- so a future change to one's filtering logic can't silently leak
-into the other's numbers.
+Three genuinely different aggregation passes run over the same fetched rows.
+`_aggregate_costs` (feeding `by_provider`) and `_aggregate_daily_savings`
+(feeding `daily_savings`, the Usage page's cumulative-savings chart) both
+answer a money/savings question, so they only ever look at priced,
+`status = 'completed'` rows -- an unpriced or pending/error row contributes
+nothing to either. `_aggregate_volume` (feeding `volume_by_provider` and
+`volume_by_model`) answers a usage/volume question instead: it counts every
+row in range regardless of status or whether pricing exists for it. They
+are kept as separate functions on purpose -- don't merge them, and don't
+make one call another -- so a future change to one's filtering logic can't
+silently leak into the others' numbers.
 
 Follows the conventions `routes_status.py` and `routes_requests.py`
 established for this phase: `get_db` (and here also
@@ -52,13 +53,14 @@ This route never creates the pricing file -- it's read-only; Task 4's
 
 import json
 import sqlite3
+from datetime import date, timedelta
 from enum import Enum
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from .datetime_utils import resolve_range_boundaries
+from .datetime_utils import local_date_of, resolve_range_boundaries
 from .dependencies import get_db, get_pricing_config_path
 from .pricing import compute_savings, load_pricing_config
 
@@ -95,6 +97,11 @@ class ByModelVolume(BaseModel):
     estimated_count: int
 
 
+class DailySavingsEntry(BaseModel):
+    date: str
+    savings: float
+
+
 class StatsResponse(BaseModel):
     range: str
     range_start: str
@@ -110,6 +117,7 @@ class StatsResponse(BaseModel):
     by_provider: list[ByProviderStats]
     volume_by_provider: list[ByProviderVolume]
     volume_by_model: list[ByModelVolume]
+    daily_savings: list[DailySavingsEntry]
 
 
 def _fetch_rows_in_range(
@@ -286,6 +294,76 @@ def _aggregate_volume(
     return volume_by_provider, volume_by_model
 
 
+def _aggregate_daily_savings(
+    rows: list[sqlite3.Row],
+    pricing_config: dict,
+    *,
+    range_name: str,
+    start: str,
+    end: str,
+) -> list[DailySavingsEntry]:
+    """Sum priced savings per local calendar day, for the Usage page's
+    cumulative-savings chart.
+
+    Uses the SAME priced-only definition as `_aggregate_costs` (a row only
+    contributes if `compute_savings` actually priced it) -- this is a money
+    metric, not a volume one, so it follows `_aggregate_costs`'s rules, not
+    `_aggregate_volume`'s. A day with no priced savings (no requests at all,
+    or requests that exist but are unpriced) shows as `0.0`, not omitted --
+    the chart needs a continuous day sequence to plot, and "no savings
+    recorded that day" is normal, expected charting behavior, unlike the
+    range-wide `total_savings` headline (which stays `None`, never `0.0`,
+    when nothing has ever been priced -- that distinction is preserved
+    there, not here).
+
+    Every calendar day in range is bucketed by the HOST'S LOCAL date (via
+    `local_date_of`, DST-correct), never the UTC date -- so a request just
+    after local midnight isn't misfiled onto the previous day, which is
+    exactly the class of bug this project's global issue #010 warns about.
+
+    `all_time`'s day-list can't start at the stored epoch boundary
+    (`resolve_range_boundaries`'s 1970-01-01) -- that would enumerate tens
+    of thousands of empty days. Instead its day-list starts at the earliest
+    row actually present (any status/pricing, not just priced ones -- an
+    honest "since we've seen any activity" starting point), or just today
+    if there's no data at all yet.
+    """
+    end_day = local_date_of(end)
+    if range_name == "all_time":
+        start_day = min((local_date_of(row["occurred_at"]) for row in rows), default=end_day)
+    else:
+        start_day = local_date_of(start)
+
+    daily: dict[str, float] = {}
+    current_day = date.fromisoformat(start_day)
+    last_day = date.fromisoformat(end_day)
+    while current_day <= last_day:
+        daily[current_day.isoformat()] = 0.0
+        current_day += timedelta(days=1)
+
+    for row in rows:
+        if row["status"] != "completed" or not _is_priceable(row):
+            continue
+        result = compute_savings(
+            pricing_config,
+            provider=row["provider"],
+            downstream_model=row["downstream_model"],
+            gateway_model=row["gateway_model"],
+            input_tokens=row["input_tokens"],
+            output_tokens=row["output_tokens"],
+        )
+        if result.unknown:
+            continue
+        day = local_date_of(row["occurred_at"])
+        if day in daily:
+            daily[day] += result.savings
+
+    return [
+        DailySavingsEntry(date=day, savings=savings)
+        for day, savings in sorted(daily.items())
+    ]
+
+
 @router.get("/stats", response_model=StatsResponse)
 def get_stats(
     range_name: RangeName = Query(RangeName.last_7_days, alias="range"),
@@ -315,6 +393,9 @@ def get_stats(
         # no usable pricing data" -- a null total_savings, not a 0.0 one --
         # and every completed row is unpriced by definition. This endpoint
         # is read-only: it never creates or repairs the pricing file itself.
+        # `_aggregate_daily_savings` is still called, with an empty config --
+        # every row is unpriced against it by construction, so every day
+        # in the chart's date range correctly comes back $0.0, not omitted.
         return StatsResponse(
             range=range_name.value,
             range_start=start,
@@ -330,10 +411,16 @@ def get_stats(
             by_provider=[],
             volume_by_provider=volume_by_provider,
             volume_by_model=volume_by_model,
+            daily_savings=_aggregate_daily_savings(
+                rows, {}, range_name=range_name.value, start=start, end=end
+            ),
         )
 
     total_savings, unpriced_request_count, by_provider = _aggregate_costs(
         rows, pricing_config
+    )
+    daily_savings = _aggregate_daily_savings(
+        rows, pricing_config, range_name=range_name.value, start=start, end=end
     )
 
     return StatsResponse(
@@ -351,4 +438,5 @@ def get_stats(
         by_provider=by_provider,
         volume_by_provider=volume_by_provider,
         volume_by_model=volume_by_model,
+        daily_savings=daily_savings,
     )

@@ -46,6 +46,22 @@ def to_utc_iso8601(dt: datetime) -> str:
     return utc_dt.strftime("%Y-%m-%dT%H:%M:%S") + f".{millis:03d}Z"
 
 
+def local_date_of(utc_iso: str, *, local_tz: str | None = None) -> str:
+    """The host machine's local calendar date (`YYYY-MM-DD`) that a stored
+    UTC timestamp falls on.
+
+    Used to bucket `requests` rows into daily chart buckets in the user's
+    own local timezone, DST-correct (via `zoneinfo`/`tzlocal`, never a
+    fixed UTC offset -- see global issue #010 for why a fixed offset
+    silently drifts wrong across a DST transition).
+
+    `local_tz` exists for deterministic testing only, same convention as
+    `resolve_range_boundaries` -- production callers must never pass it.
+    """
+    tz = ZoneInfo(local_tz) if local_tz is not None else _local_zone()
+    return datetime.fromisoformat(utc_iso).astimezone(tz).date().isoformat()
+
+
 def now_utc_iso8601() -> str:
     """Current instant, UTC, in this project's canonical storage format.
 

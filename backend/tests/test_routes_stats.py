@@ -244,3 +244,85 @@ def test_volume_estimated_count_reflects_estimated_timestamp_rows(client_and_db)
 
     model_entry = next(r for r in body["volume_by_model"] if r["model"] == "glm-4")
     assert model_entry["estimated_count"] == 1
+
+
+def test_daily_savings_buckets_by_day_and_fills_gaps_with_zero(client_and_db):
+    client, db = client_and_db
+    # nvidia_nim/glm-4 is priced at $0/$0 in SAMPLE_PRICING; gateway "sonnet"
+    # is $3/$15 per million -- so equivalent_cost is the full sonnet price
+    # and actual_cost is $0, making savings == equivalent_cost exactly.
+    _insert_completed(db, "req_1", "nvidia_nim", "sonnet", "glm-4",
+                       1_000_000, 1_000_000, "2026-08-24T10:00:00.000Z")  # $18 saved
+    _insert_completed(db, "req_2", "nvidia_nim", "sonnet", "glm-4",
+                       500_000, 500_000, "2026-08-22T10:00:00.000Z")  # $9 saved
+    db.commit()
+
+    response = client.get("/stats?range=last_7_days")
+    body = response.json()
+
+    by_date = {e["date"]: e["savings"] for e in body["daily_savings"]}
+    assert any(abs(v - 18.0) < 1e-6 for v in by_date.values())
+    assert any(abs(v - 9.0) < 1e-6 for v in by_date.values())
+    # 2026-08-23 has no activity but sits between the two priced days --
+    # it must still appear in the list, at $0.0, not be omitted. The chart
+    # needs a continuous day sequence, not just the days with data.
+    assert any(v == 0.0 for v in by_date.values())
+    dates = [e["date"] for e in body["daily_savings"]]
+    assert dates == sorted(dates)
+
+
+def test_daily_savings_excludes_unpriced_and_non_completed_rows(client_and_db):
+    client, db = client_and_db
+    db.execute(
+        "INSERT INTO requests (request_id, provider, gateway_model, downstream_model, "
+        "input_tokens, output_tokens, occurred_at, ingested_at, status) VALUES "
+        "('req_pending', 'nvidia_nim', 'sonnet', 'glm-4', 1000000, 1000000, "
+        "'2026-08-24T10:00:00.000Z', '2026-08-24T10:00:00.000Z', 'pending')"
+    )
+    _insert_completed(db, "req_unpriced", "nvidia_nim", "sonnet", "some-unpriced-model",
+                       1_000_000, 1_000_000, "2026-08-24T10:00:00.000Z")
+    db.commit()
+
+    response = client.get("/stats?range=last_7_days")
+    body = response.json()
+
+    assert all(e["savings"] == 0.0 for e in body["daily_savings"])
+
+
+def test_daily_savings_all_zero_but_present_when_no_pricing_file(tmp_path):
+    test_db = init_db(":memory:")
+    missing_path = tmp_path / "does_not_exist.json"
+    app.dependency_overrides[get_db] = lambda: test_db
+    app.dependency_overrides[get_pricing_config_path] = lambda: missing_path
+    client = TestClient(app)
+
+    _insert_completed(test_db, "req_1", "nvidia_nim", "sonnet", "glm-4",
+                       1_000_000, 1_000_000, "2026-08-24T10:00:00.000Z")
+    test_db.commit()
+
+    response = client.get("/stats?range=last_7_days")
+    body = response.json()
+
+    assert body["total_savings"] is None
+    # A day-list must still be returned (for a continuous chart), even
+    # though nothing has ever been priced -- each entry is $0.0, distinct
+    # from the range-wide total_savings staying None.
+    assert len(body["daily_savings"]) > 0
+    assert all(e["savings"] == 0.0 for e in body["daily_savings"])
+
+
+def test_daily_savings_all_time_starts_at_earliest_row_not_the_epoch(client_and_db):
+    client, db = client_and_db
+    _insert_completed(db, "req_1", "nvidia_nim", "sonnet", "glm-4",
+                       1_000_000, 1_000_000, "2026-08-20T10:00:00.000Z")
+    db.commit()
+
+    response = client.get("/stats?range=all_time")
+    body = response.json()
+
+    dates = [e["date"] for e in body["daily_savings"]]
+    # Must start at (or after) the earliest real row's date -- never at
+    # the 1970-01-01 epoch boundary all_time's UTC range technically spans,
+    # which would enumerate tens of thousands of empty days.
+    assert dates[0] >= "2026-08-20"
+    assert dates == sorted(dates)
