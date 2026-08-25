@@ -5,6 +5,9 @@ vault-fcc-dashboard/
 # superpowers subagent-driven-development scratch workspace
 .superpowers/
 
+# superpowers implementation plans (planning artifacts, not project docs)
+docs/superpowers/plans/
+
 # Python
 __pycache__/
 *.pyc
