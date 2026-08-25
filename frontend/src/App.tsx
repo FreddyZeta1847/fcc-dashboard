@@ -5,13 +5,12 @@
  * failure — the dashboard's OWN backend not running — can short-circuit
  * the whole dashboard before any panel mounts. This is deliberately a
  * different failure mode from `fcc_status: "down"`, which is a *successful*
- * response and is FCC being down, not our backend: see useStatus.ts. Task 6
- * will replace the single <StatusPanel /> below with the full Overview page
- * once MoneySavedHeadline and RecentRequestsFeed exist, but will keep this
- * same gating pattern.
+ * response and is FCC being down, not our backend: see useStatus.ts. The
+ * "backend reachable" branch mounts the full Overview page (Task 6), which
+ * composes StatusPanel, MoneySavedHeadline, and RecentRequestsFeed.
  */
 import { useStatus } from './hooks/useStatus'
-import { StatusPanel } from './components/StatusPanel'
+import { Overview } from './pages/Overview'
 
 function App() {
   const { isLoading, isError } = useStatus()
@@ -38,7 +37,7 @@ function App() {
   return (
     <div className="min-h-screen">
       <h1 className="text-2xl font-semibold p-4">FCC Dashboard</h1>
-      <StatusPanel />
+      <Overview />
     </div>
   )
 }
