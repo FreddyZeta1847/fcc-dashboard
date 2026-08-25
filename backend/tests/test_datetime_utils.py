@@ -1,12 +1,14 @@
 """Unit tests for backend.fcc_dashboard.datetime_utils."""
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from fcc_dashboard.datetime_utils import (
     now_utc_iso8601,
     parse_fcc_timestamp,
+    resolve_range_boundaries,
     to_utc_iso8601,
 )
 
@@ -57,3 +59,51 @@ def test_now_utc_iso8601_format():
     # Round-trips through parse_fcc_timestamp without raising
     parsed = parse_fcc_timestamp(result.replace("Z", "+00:00"))
     assert parsed.tzinfo is not None
+
+
+def test_resolve_range_boundaries_today():
+    # Fixed "now": 2026-08-24 15:30:00 in Europe/Rome (UTC+2 in August, DST)
+    fixed_now = datetime(2026, 8, 24, 15, 30, 0, tzinfo=ZoneInfo("Europe/Rome"))
+    start, end = resolve_range_boundaries("today", local_tz="Europe/Rome", now=fixed_now)
+    # Local midnight 2026-08-24 00:00:00+02:00 -> UTC 2026-08-23T22:00:00.000Z
+    assert start == "2026-08-23T22:00:00.000Z"
+    # End is "now" itself, normalized to UTC
+    assert end == "2026-08-24T13:30:00.000Z"
+
+
+def test_resolve_range_boundaries_last_7_days():
+    fixed_now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=ZoneInfo("Europe/Rome"))
+    start, end = resolve_range_boundaries("last_7_days", local_tz="Europe/Rome", now=fixed_now)
+    # 7 days back from local midnight of "today"
+    assert start == "2026-08-16T22:00:00.000Z"
+    assert end == "2026-08-24T10:00:00.000Z"
+
+
+def test_resolve_range_boundaries_last_30_days():
+    fixed_now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=ZoneInfo("Europe/Rome"))
+    start, end = resolve_range_boundaries("last_30_days", local_tz="Europe/Rome", now=fixed_now)
+    assert start == "2026-07-25T22:00:00.000Z"
+    assert end == "2026-08-24T10:00:00.000Z"
+
+
+def test_resolve_range_boundaries_all_time():
+    fixed_now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=ZoneInfo("Europe/Rome"))
+    start, end = resolve_range_boundaries("all_time", local_tz="Europe/Rome", now=fixed_now)
+    # "all_time" start is a fixed epoch far in the past (project inception),
+    # not computed relative to now.
+    assert start == "1970-01-01T00:00:00.000Z"
+    assert end == "2026-08-24T10:00:00.000Z"
+
+
+def test_resolve_range_boundaries_rejects_unknown_range():
+    with pytest.raises(ValueError):
+        resolve_range_boundaries("last_fortnight")
+
+
+def test_resolve_range_boundaries_uses_real_local_time_by_default():
+    # No overrides: must not raise, must return two valid ISO-8601 UTC strings
+    # where start <= end.
+    start, end = resolve_range_boundaries("today")
+    assert start <= end
+    assert start.endswith("Z")
+    assert end.endswith("Z")

@@ -14,7 +14,8 @@ that themselves by catching the exception; this module's contract stops
 at "parse correctly, or raise clearly."
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 
 def parse_fcc_timestamp(raw: str) -> datetime:
@@ -47,3 +48,51 @@ def now_utc_iso8601() -> str:
     Phase 2 — this function just supplies "now" in the right format).
     """
     return to_utc_iso8601(datetime.now(timezone.utc))
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def resolve_range_boundaries(
+    range_name: str,
+    *,
+    local_tz: str | None = None,
+    now: datetime | None = None,
+) -> tuple[str, str]:
+    """Resolve a named range into (start, end) UTC ISO-8601 boundaries.
+
+    Boundaries are computed in the host machine's local timezone (DST-correct,
+    via zoneinfo) so "today"/"last_7_days"/etc. mean what a human on this
+    machine expects "today" to mean — then converted to UTC for querying.
+
+    Supported range_name values: "today", "last_7_days", "last_30_days",
+    "all_time".
+
+    `local_tz` and `now` exist for deterministic testing only. Production
+    callers must never pass them — the backend always uses the real host
+    timezone and the real current time (per DATE-TIME--architecture: no
+    timezone parameter is ever exposed to the frontend or API).
+
+    Raises ValueError for an unrecognized range_name.
+    """
+    tz = ZoneInfo(local_tz) if local_tz is not None else datetime.now().astimezone().tzinfo
+    current = now if now is not None else datetime.now(tz)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=tz)
+
+    local_midnight_today = current.astimezone(tz).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+    if range_name == "today":
+        start_local = local_midnight_today
+    elif range_name == "last_7_days":
+        start_local = local_midnight_today - timedelta(days=7)
+    elif range_name == "last_30_days":
+        start_local = local_midnight_today - timedelta(days=30)
+    elif range_name == "all_time":
+        return (to_utc_iso8601(_EPOCH), to_utc_iso8601(current))
+    else:
+        raise ValueError(f"unrecognized range_name: {range_name!r}")
+
+    return (to_utc_iso8601(start_local), to_utc_iso8601(current))
