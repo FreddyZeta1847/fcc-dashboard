@@ -103,3 +103,16 @@ def test_ignores_valid_json_that_is_not_an_object():
 
 def test_ignores_json_object_with_no_event_key():
     assert parse_log_line(json.dumps({"foo": "bar"})) is None
+
+
+def test_ignores_non_string_event_value_without_raising():
+    # Regression test: an "event" value that isn't a string (a list, a
+    # dict, a number, a bool, or null) previously crashed the membership
+    # check with `TypeError: unhashable type` for the list/dict cases,
+    # because `value not in a_set` must hash `value` first. This must
+    # degrade to None like any other irrelevant line, never raise.
+    assert parse_log_line(json.dumps({"event": ["provider.request.sent"]})) is None
+    assert parse_log_line(json.dumps({"event": {"nested": "value"}})) is None
+    assert parse_log_line(json.dumps({"event": 42})) is None
+    assert parse_log_line(json.dumps({"event": None})) is None
+    assert parse_log_line(json.dumps({"event": True})) is None
