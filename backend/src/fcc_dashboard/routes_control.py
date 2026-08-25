@@ -44,6 +44,31 @@ call, in this order, no matter which branch below eventually fires):
 
 `async def` because step 2 awaits `_check_fcc_health()`, matching
 `routes_status.py`'s handler.
+
+`POST /control/stop` -- stop the FCC server process this backend is tracking,
+if any. Same flush-before-action guarantee as start: `poll_once` is the
+first, unconditional statement, before the persisted PID is even read, for
+the identical reason (draining whatever's already on disk before any
+decision is made). After that:
+
+1. Read the persisted PID from `process_state` (`_persisted_pid`, shared
+   with `start_fcc`). If it's `NULL`, or `is_process_alive(pid)` says the
+   PID isn't actually alive (stale bookkeeping -- e.g. the process crashed,
+   or was killed outside the dashboard), there is nothing to stop: clear
+   `process_state` back to `NULL`/`NULL` (nothing left to track either way)
+   and return `"not_running"` with `pid: null`.
+2. Otherwise call `terminate_process(pid)`, then clear `process_state` the
+   same way, and return `"stopped"` with the PID that was just stopped.
+
+`is_process_alive` / `terminate_process` are imported as bare names from
+`.process_control`, matching the `find_fcc_server_executable` /
+`launch_detached` pattern above -- the test suite patches them directly on
+`routes_control` and relies on the handler resolving the bare name from
+this module's own globals at call time.
+
+Plain `def`, not `async def`: unlike start, stop never awaits anything --
+it doesn't call `_check_fcc_health()`, and `poll_once`/`terminate_process`
+are both synchronous.
 """
 
 import sqlite3
@@ -58,13 +83,23 @@ from . import routes_status
 from .collector import poll_once
 from .datetime_utils import now_utc_iso8601
 from .dependencies import get_db, get_fcc_log_path
-from .process_control import find_fcc_server_executable, launch_detached
+from .process_control import (
+    find_fcc_server_executable,
+    is_process_alive,
+    launch_detached,
+    terminate_process,
+)
 
 router = APIRouter()
 
 
 class ControlResponse(BaseModel):
     action: Literal["started", "already_running", "executable_not_found"]
+    pid: int | None
+
+
+class StopResponse(BaseModel):
+    action: Literal["stopped", "not_running"]
     pid: int | None
 
 
@@ -108,3 +143,32 @@ async def start_fcc(
     db.commit()
 
     return ControlResponse(action="started", pid=pid)
+
+
+def _clear_process_state(db: sqlite3.Connection) -> None:
+    """Reset `process_state` back to its untracked baseline (`pid` and
+    `started_at` both `NULL`). Called whenever `/control/stop` concludes
+    there is nothing left to track -- whether because it just stopped the
+    process itself, or because the persisted PID was already stale.
+    """
+    db.execute(
+        "UPDATE process_state SET pid = NULL, started_at = NULL WHERE id = 1"
+    )
+    db.commit()
+
+
+@router.post("/control/stop", response_model=StopResponse)
+def stop_fcc(
+    db: sqlite3.Connection = Depends(get_db),
+    fcc_log_path: Path = Depends(get_fcc_log_path),
+) -> StopResponse:
+    poll_once(db, fcc_log_path)
+
+    pid = _persisted_pid(db)
+    if pid is None or not is_process_alive(pid):
+        _clear_process_state(db)
+        return StopResponse(action="not_running", pid=None)
+
+    terminate_process(pid)
+    _clear_process_state(db)
+    return StopResponse(action="stopped", pid=pid)

@@ -95,3 +95,62 @@ def test_start_flushes_collector_before_acting(client_and_db, monkeypatch, tmp_p
 
     after = db.execute("SELECT last_run_at FROM collector_state").fetchone()
     assert after["last_run_at"] is not None
+
+
+def test_stop_when_not_running(client_and_db):
+    client, _db = client_and_db
+    response = client.post("/control/stop")
+    assert response.status_code == 200
+    assert response.json()["action"] == "not_running"
+
+
+def test_stop_terminates_and_clears_state(client_and_db, monkeypatch):
+    client, db = client_and_db
+    db.execute(
+        "UPDATE process_state SET pid = ?, started_at = ?",
+        (54321, "2026-08-25T00:00:00.000Z"),
+    )
+    db.commit()
+
+    import fcc_dashboard.routes_control as routes_control
+
+    monkeypatch.setattr(routes_control, "is_process_alive", lambda pid: True)
+    terminate_calls = []
+    monkeypatch.setattr(
+        routes_control,
+        "terminate_process",
+        lambda pid, **kwargs: terminate_calls.append(pid) or True,
+    )
+
+    response = client.post("/control/stop")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["action"] == "stopped"
+    assert body["pid"] == 54321
+    assert terminate_calls == [54321]
+
+    row = db.execute("SELECT pid, started_at FROM process_state").fetchone()
+    assert row["pid"] is None
+    assert row["started_at"] is None
+
+
+def test_stop_with_stale_pid_clears_state_without_terminating(client_and_db, monkeypatch):
+    client, db = client_and_db
+    db.execute(
+        "UPDATE process_state SET pid = ?, started_at = ?",
+        (99999, "2026-08-25T00:00:00.000Z"),
+    )
+    db.commit()
+
+    import fcc_dashboard.routes_control as routes_control
+
+    monkeypatch.setattr(routes_control, "is_process_alive", lambda pid: False)
+
+    response = client.post("/control/stop")
+
+    body = response.json()
+    assert body["action"] == "not_running"
+
+    row = db.execute("SELECT pid FROM process_state").fetchone()
+    assert row["pid"] is None
