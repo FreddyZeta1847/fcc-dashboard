@@ -19,6 +19,8 @@
 │   │       ├── dependencies.py
 │   │       ├── log_parser.py
 │   │       ├── pricing.py
+│   │       ├── process_control.py
+│   │       ├── routes_control.py
 │   │       ├── routes_db.py
 │   │       ├── routes_pricing.py
 │   │       ├── routes_requests.py
@@ -33,6 +35,8 @@
 │   │   ├── test_log_parser.py
 │   │   ├── test_placeholder.py
 │   │   ├── test_pricing.py
+│   │   ├── test_process_control.py
+│   │   ├── test_routes_control.py
 │   │   ├── test_routes_db.py
 │   │   ├── test_routes_pricing.py
 │   │   ├── test_routes_requests.py
@@ -48,7 +52,8 @@
 │           ├── 2026-08-25-phase-0-scaffolding.md
 │           ├── 2026-08-25-phase-1-core-utilities.md
 │           ├── 2026-08-25-phase-2-persistence-collector.md
-│           └── 2026-08-25-phase-3-api.md
+│           ├── 2026-08-25-phase-3-api.md
+│           └── 2026-08-25-phase-4-process-control.md
 ├── frontend/
 │   ├── public/
 │   │   └── favicon.svg
