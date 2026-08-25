@@ -69,3 +69,59 @@ export interface RequestsListResponse {
   offset: number
   results: RequestRow[]
 }
+
+export interface PriceEntry {
+  input_per_million: number
+  output_per_million: number
+  [key: string]: unknown // currency/last_updated/source may be present
+}
+
+export interface PricingConfig {
+  anthropic: { opus: PriceEntry; sonnet: PriceEntry; haiku: PriceEntry }
+  providers: Record<string, Record<string, PriceEntry>>
+}
+
+export interface PricingChange {
+  provider: string
+  model: string
+  current: { input_per_million: number; output_per_million: number } | null
+  proposed: { input_per_million: number; output_per_million: number } | null
+  source: string
+  changed: boolean
+}
+
+export interface PricingPairNotFound {
+  provider: string
+  model: string
+}
+
+export interface PricingRefreshResponse {
+  changes: PricingChange[]
+  not_found: PricingPairNotFound[]
+}
+
+export interface TablesListResponse {
+  tables: string[]
+}
+
+export interface TableRowsResponse {
+  table: string
+  total: number
+  limit: number
+  offset: number
+  columns: string[]
+  rows: unknown[][]
+}
+
+export type ControlStartAction = 'started' | 'already_running' | 'executable_not_found' | 'launch_failed'
+export type ControlStopAction = 'stopped' | 'not_running' | 'stop_failed'
+
+export interface ControlStartResponse {
+  action: ControlStartAction
+  pid: number | null
+}
+
+export interface ControlStopResponse {
+  action: ControlStopAction
+  pid: number | null
+}

@@ -6,7 +6,18 @@
  * cases. Written before client.ts exists (TDD): this file is the contract.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getStatus, getStats, getRecentRequests } from './client'
+import {
+  getStatus,
+  getStats,
+  getRecentRequests,
+  getPricing,
+  putPricing,
+  postPricingRefresh,
+  getDbTables,
+  getDbTableRows,
+  postControlStart,
+  postControlStop,
+} from './client'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -61,6 +72,79 @@ describe('getRecentRequests', () => {
     )
     const result = await getRecentRequests(20)
     expect(global.fetch).toHaveBeenCalledWith('/requests?limit=20')
+    expect(result).toEqual(body)
+  })
+})
+
+describe('getPricing', () => {
+  it('fetches /pricing', async () => {
+    const body = { anthropic: {}, providers: {} }
+    vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+    const result = await getPricing()
+    expect(global.fetch).toHaveBeenCalledWith('/pricing')
+    expect(result).toEqual(body)
+  })
+})
+
+describe('putPricing', () => {
+  it('PUTs the full config document as JSON', async () => {
+    const config = { anthropic: {}, providers: {} }
+    vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify(config), { status: 200 }))
+    await putPricing(config as never)
+    expect(global.fetch).toHaveBeenCalledWith('/pricing', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    })
+  })
+})
+
+describe('postPricingRefresh', () => {
+  it('POSTs to /pricing/refresh with no body', async () => {
+    const body = { changes: [], not_found: [] }
+    vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+    const result = await postPricingRefresh()
+    expect(global.fetch).toHaveBeenCalledWith('/pricing/refresh', { method: 'POST' })
+    expect(result).toEqual(body)
+  })
+})
+
+describe('getDbTables', () => {
+  it('fetches /db/tables', async () => {
+    const body = { tables: ['requests'] }
+    vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+    const result = await getDbTables()
+    expect(global.fetch).toHaveBeenCalledWith('/db/tables')
+    expect(result).toEqual(body)
+  })
+})
+
+describe('getDbTableRows', () => {
+  it('fetches /db/tables/{name} with limit and offset', async () => {
+    const body = { table: 'requests', total: 0, limit: 20, offset: 0, columns: [], rows: [] }
+    vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+    const result = await getDbTableRows('requests', 20, 0)
+    expect(global.fetch).toHaveBeenCalledWith('/db/tables/requests?limit=20&offset=0')
+    expect(result).toEqual(body)
+  })
+})
+
+describe('postControlStart', () => {
+  it('POSTs to /control/start', async () => {
+    const body = { action: 'started', pid: 123 }
+    vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+    const result = await postControlStart()
+    expect(global.fetch).toHaveBeenCalledWith('/control/start', { method: 'POST' })
+    expect(result).toEqual(body)
+  })
+})
+
+describe('postControlStop', () => {
+  it('POSTs to /control/stop', async () => {
+    const body = { action: 'stopped', pid: 123 }
+    vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }))
+    const result = await postControlStop()
+    expect(global.fetch).toHaveBeenCalledWith('/control/stop', { method: 'POST' })
     expect(result).toEqual(body)
   })
 })
