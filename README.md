@@ -4,12 +4,25 @@ A monitoring and analytics dashboard for [free-claude-code](https://github.com/A
 (FCC), a proxy tool that routes Claude Code requests to third-party model
 providers. This dashboard reads FCC's own log file and calls FCC's own HTTP
 API to show live status, usage, and cost data — it is a separate, standalone
-tool that never modifies FCC or its installation.
+tool that never modifies FCC or its installation. Data on screen updates on
+a background ~5 second polling interval, not instantly — a new FCC request
+can take up to a few seconds to show up.
 
 FCC itself must already be installed separately; this dashboard does not
 install or manage FCC's installation. The only thing it does to FCC's
 process is start and stop the `fcc-server` process once FCC is already
 present on the machine.
+
+### Process control
+
+Starting FCC from the dashboard launches it as a real, fully detached
+background process — it keeps running even after you close the dashboard
+or stop its own backend. Use the dashboard's Stop control (or your own
+OS's process tools) to actually stop it.
+
+On Windows, stopping FCC through the dashboard is always a hard kill —
+`fcc-server` gets no chance to shut down gracefully or flush its own state
+before being terminated.
 
 Development and manual testing so far has been done against FCC v5.14.3.
 Other FCC versions have not been tested.
@@ -54,8 +67,12 @@ a browser during development.
 ## Production / single-process mode
 
 For a single-process setup, build the frontend first, then start the
-backend. The backend serves both the API and the built frontend from one
-process on one port.
+backend, in that order. The backend serves both the API and the built
+frontend from one process on one port, but it only decides whether it has
+a build to serve once, at its own startup — a backend that's already
+running will not pick up a build that finishes after it started. If you
+rebuild the frontend while the backend is already running, restart the
+backend afterward.
 
 Build the frontend (from `frontend/`):
 
