@@ -1,6 +1,6 @@
 <p align="center">
   <h1 align="center">
-    <img src="assets/logo.png" width="40" valign="middle" alt="" />
+    <img src="assets/logo.png" width="64" valign="middle" alt="" />
     FCC Dashboard
   </h1>
   <p align="center"><b>See what your Claude Code proxy is actually doing.</b></p>
