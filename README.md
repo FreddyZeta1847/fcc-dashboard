@@ -1,5 +1,8 @@
 <p align="center">
-  <h1 align="center">FCC Dashboard</h1>
+  <h1 align="center">
+    <img src="assets/logo.png" width="40" valign="middle" alt="" />
+    FCC Dashboard
+  </h1>
   <p align="center"><b>See what your Claude Code proxy is actually doing.</b></p>
   <p align="center">A local, read-only monitoring dashboard for <a href="https://github.com/Alishahryar1/free-claude-code">free-claude-code</a> (FCC) — live status, request history, and real cost savings, in your browser.</p>
 </p>
