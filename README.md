@@ -18,6 +18,8 @@
 
 ---
 
+![FCC Dashboard screenshot](assets/screenshot.png)
+
 ## What this is
 
 [free-claude-code](https://github.com/Alishahryar1/free-claude-code) (FCC) is a proxy that lets you run Claude Code while routing the actual model requests through cheaper or free third-party providers — NVIDIA NIM, OpenRouter, DeepSeek, local models via Ollama or LM Studio, and others — instead of paying Anthropic's own API prices.
@@ -29,15 +31,6 @@
 - How much money is that saving me compared to hitting Anthropic directly?
 
 FCC itself is not part of this repo — you need to install and configure it separately first. Development and testing has been done against **FCC v5.14.3**; other versions aren't guaranteed to work identically, since the log format this dashboard reads is tied to that version.
-
-## Pages
-
-| Page | What it shows |
-|---|---|
-| **Overview** | FCC's live up/down status, a rolling feed of recent requests with per-request savings, and headline "money saved" totals. |
-| **Usage** | Cumulative savings-over-time chart, plus token and request volume broken down by provider and model, over today / 7 days / 30 days / all time. |
-| **Settings** | Editable $/million-token pricing for every provider+model pair FCC has actually routed through, plus the 4 official Anthropic tiers (Claude Fable 5, Opus 5, Sonnet 5, Haiku 4.5) used as the "what would this have cost on Anthropic" baseline. All writes require an explicit confirm step. A "refresh prices" flow can cross-check your config against LiteLLM's and OpenRouter's public catalogs and shows a diff before applying anything. |
-| **Database** | A raw, read-only SQLite table browser for debugging, with an expandable detail view per request. |
 
 One rule holds across every page: **money numbers are never guessed.** If a provider+model pair has no configured price, its savings show as "unknown" — never silently $0, never assumed free.
 
@@ -71,6 +64,17 @@ cd backend && uv run fcc-dashboard-server
 Open **http://127.0.0.1:8000**.
 
 > If you rebuild the frontend while the backend is already running, restart the backend — it only checks for a frontend build once, at its own startup.
+
+### Global `fcc-dashboard` command (optional)
+
+For repeated local use, `npm link` (or `npm install -g .`, run from the repo root) once registers a `fcc-dashboard` global command that starts the single-process server from any directory — a shortcut for the quick start's final "start" step, not a replacement for it. It doesn't build the frontend or sync backend dependencies for you; run the steps above at least once first.
+
+```bash
+npm link      # from the repo root, once
+fcc-dashboard # from anywhere, any time after
+```
+
+Uninstall with `npm uninstall -g fcc-dashboard`.
 
 ## Development mode
 
@@ -121,4 +125,4 @@ On Windows, stopping FCC through the dashboard is always a hard kill — there's
 
 ## Status
 
-This is a personal utility for monitoring your own local FCC setup — not a hosted service, and there's no multi-user or account system. Screenshots coming soon.
+This is a personal utility for monitoring your own local FCC setup — not a hosted service, and there's no multi-user or account system.
