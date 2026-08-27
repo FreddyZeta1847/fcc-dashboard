@@ -33,7 +33,15 @@ function mockFetchByPath(handlers: Record<string, unknown>) {
 
 describe('Database', () => {
   it('lists the real table names', async () => {
-    mockFetchByPath({ '/db/tables': { tables: ['requests', 'collector_state'] } })
+    mockFetchByPath({
+      // Listed before '/db/tables': mockFetchByPath matches by startsWith in
+      // insertion order, so the generic key would otherwise shadow this one.
+      // The page opens on `requests`, so its rows are fetched immediately.
+      '/db/tables/requests': {
+        table: 'requests', total: 0, limit: 50, offset: 0, columns: [], rows: [],
+      },
+      '/db/tables': { tables: ['requests', 'collector_state'] },
+    })
     renderWithClient(<Database />)
     await waitFor(() => expect(screen.getByText('requests')).toBeInTheDocument())
     expect(screen.getByText('collector_state')).toBeInTheDocument()
@@ -139,5 +147,57 @@ describe('Database', () => {
     await userEvent.click(screen.getByText('collector_state'))
     await waitFor(() => expect(screen.getByText('100')).toBeInTheDocument())
     expect(screen.queryByRole('button', { name: /expand request details/i })).not.toBeInTheDocument()
+  })
+  it('opens on the requests table instead of an empty prompt', async () => {
+    /*
+     * The requests table is the reason this page exists -- every other table
+     * here is single-row bookkeeping -- so landing on an inert "select a
+     * table" message wasted a click every time.
+     */
+    mockFetchByPath({
+      '/db/tables/requests': {
+        table: 'requests', total: 1, limit: 50, offset: 0,
+        columns: ['request_id'], rows: [['req-default']],
+      },
+      '/db/tables': { tables: ['collector_state', 'requests', 'process_state'] },
+    })
+    renderWithClient(<Database />)
+
+    // Rows appear with no interaction at all.
+    await waitFor(() => expect(screen.getByText('req-default')).toBeInTheDocument())
+    expect(screen.queryByText(/select a table/i)).not.toBeInTheDocument()
+  })
+
+  it('lets the user switch away from the default and keeps that choice', async () => {
+    mockFetchByPath({
+      '/db/tables/requests': {
+        table: 'requests', total: 1, limit: 50, offset: 0,
+        columns: ['request_id'], rows: [['req-default']],
+      },
+      '/db/tables/collector_state': {
+        table: 'collector_state', total: 1, limit: 50, offset: 0,
+        columns: ['last_offset'], rows: [[4242]],
+      },
+      '/db/tables': { tables: ['requests', 'collector_state'] },
+    })
+    renderWithClient(<Database />)
+    await waitFor(() => expect(screen.getByText('req-default')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByText('collector_state'))
+
+    await waitFor(() => expect(screen.getByText('4242')).toBeInTheDocument())
+    expect(screen.queryByText('req-default')).not.toBeInTheDocument()
+  })
+
+  it('falls back to the first table when requests is absent', async () => {
+    mockFetchByPath({
+      '/db/tables/collector_state': {
+        table: 'collector_state', total: 1, limit: 50, offset: 0,
+        columns: ['last_offset'], rows: [[7]],
+      },
+      '/db/tables': { tables: ['collector_state'] },
+    })
+    renderWithClient(<Database />)
+    await waitFor(() => expect(screen.getByText('7')).toBeInTheDocument())
   })
 })

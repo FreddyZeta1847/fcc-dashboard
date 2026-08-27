@@ -20,6 +20,14 @@
  * overview (model routing / tokens / cost / timing) — see
  * REQUEST_FIELD_GROUPS below. Neither applies to any other table.
  *
+ * The page opens on `requests` rather than an empty "select a table"
+ * prompt. That table is why this page exists -- it's the one being debugged,
+ * it always exists (`db.py` creates it unconditionally), and every other
+ * table here is single-row bookkeeping. The default is derived at render
+ * time rather than seeded into state, so it needs no effect to sync once
+ * `useDbTables()` resolves: `chosenTable` stays null until the user actually
+ * picks something, and their pick wins from then on.
+ *
  * `data.total` (the real row count) is rendered alongside the fetched
  * rows: with a fixed limit=50 and no pagination, silently showing 50 rows
  * on a table with thousands more would be misleading, not just "not yet
@@ -30,6 +38,9 @@ import { useState } from 'react'
 import { useDbTables, useDbTableRows } from '../hooks/useDbTables'
 import { Card } from '../components/Card'
 import { Skeleton } from '../components/Skeleton'
+
+// Opened by default -- see the module docstring.
+const DEFAULT_TABLE = 'requests'
 
 const ROW_LIMIT = 50
 const ROW_OFFSET = 0
@@ -204,7 +215,9 @@ function TableRowsView({ table }: { table: string }) {
 
 export function Database() {
   const { data, isLoading, isError } = useDbTables()
-  const [selectedTable, setSelectedTable] = useState('')
+  // null means "the user hasn't picked one yet", which is what lets the
+  // derived default below apply without overriding a real choice.
+  const [chosenTable, setChosenTable] = useState<string | null>(null)
 
   if (isError) {
     return (
@@ -223,6 +236,11 @@ export function Database() {
     )
   }
 
+  const fallbackTable = data.tables.includes(DEFAULT_TABLE)
+    ? DEFAULT_TABLE
+    : (data.tables[0] ?? '')
+  const selectedTable = chosenTable ?? fallbackTable
+
   return (
     <div style={{ maxWidth: 1060 }}>
       <div style={{ marginBottom: 28 }}>
@@ -240,7 +258,7 @@ export function Database() {
               <button
                 key={table}
                 type="button"
-                onClick={() => setSelectedTable(table)}
+                onClick={() => setChosenTable(table)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -263,7 +281,7 @@ export function Database() {
         </div>
         <Card>
           {selectedTable === '' ? (
-            <p style={{ color: 'var(--faint)' }}>Select a table to view its rows.</p>
+            <p style={{ color: 'var(--faint)' }}>No tables found in the database.</p>
           ) : (
             <TableRowsView table={selectedTable} />
           )}
