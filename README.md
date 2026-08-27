@@ -68,6 +68,8 @@ Open **http://127.0.0.1:8000**.
 
 > If you rebuild the frontend while the backend is already running, restart the backend — it only checks for a frontend build once, at its own startup.
 
+> **If port 8000 is busy**, the server names whatever is holding it and starts on the next free port in 8001–8009 instead — watch the startup output for the URL. When the holder turns out to be an older dashboard server left over from a previous session, the message includes the command to stop it. To pin an exact port and skip the fallback, set `FCC_DASHBOARD_PORT`.
+
 ### Global `fcc-dashboard` command (optional)
 
 For repeated local use, `npm link` (or `npm install -g .`, run from the repo root) once registers a `fcc-dashboard` global command that starts the single-process server from any directory — a shortcut for the quick start's final "start" step, not a replacement for it. It doesn't build the frontend or sync backend dependencies for you; run the steps above at least once first.
@@ -87,11 +89,16 @@ Runs the backend API and the Vite dev server separately, in two terminals. The V
 ```bash
 uv run fcc-dashboard-server
 ```
-Binds to `127.0.0.1:8000`.
+Binds to `127.0.0.1:8000`, or the next free port in 8001–8009 if that one is taken.
 
 **Terminal 2** (from `frontend/`):
 ```bash
 npm run dev
+```
+
+If terminal 1 fell back to another port, point the dev proxy at it — otherwise Vite keeps forwarding API calls to 8000:
+```bash
+FCC_DASHBOARD_PORT=8001 npm run dev   # PowerShell: $env:FCC_DASHBOARD_PORT=8001; npm run dev
 ```
 Starts Vite on `127.0.0.1:5173`. Open that URL during development — not the backend's port.
 
