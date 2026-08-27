@@ -7,7 +7,7 @@ on NVIDIA NIM, paid via OpenRouter). The config is a plain JSON file, human-
 editable, matching this schema:
 
 {
-  "anthropic": {"opus": {input_per_million, output_per_million}, "sonnet": {...}, "haiku": {...}},
+  "anthropic": {"claude-opus-5": {input_per_million, output_per_million}, ...},
   "providers": {"<provider>": {"<model>": {input_per_million, output_per_million,
                                             currency, last_updated, source}}}
 }
@@ -92,7 +92,14 @@ def lookup_price(config: dict, provider: str, model: str) -> dict | None:
 
 
 def lookup_anthropic_price(config: dict, tier: str) -> dict | None:
-    """Look up the Anthropic price for a gateway tier ('opus'/'sonnet'/'haiku').
+    """Look up the Anthropic price for a gateway tier.
+
+    `tier` is the full gateway model id as it appears in the log's
+    `gateway_model` field -- `claude-opus-5`, `claude-haiku-4-5-20251001`, and
+    so on. The authoritative list is `routes_pricing.REQUIRED_ANTHROPIC_TIERS`;
+    do not hardcode a short-name list against it. Doing exactly that is what
+    silently broke the price-refresh write path once the tiers were renamed
+    from `opus`/`sonnet`/`haiku` to their full ids.
 
     Returns None if the tier isn't configured.
 

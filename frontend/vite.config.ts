@@ -1,4 +1,4 @@
-/*
+﻿/*
  * vite.config.ts
  * Vite build configuration for the FCC Dashboard frontend.
  * https://vite.dev/config/
@@ -30,6 +30,7 @@ export default defineConfig({
       '/pricing': backend,
       '/control': backend,
       '/db': backend,
+      '/fcc': backend,
     },
   },
   test: {
