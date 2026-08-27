@@ -1,4 +1,4 @@
-﻿.
+.
 ├── assets/
 │   ├── logo.png
 │   └── screenshot.png
@@ -71,6 +71,7 @@
 │   │   ├── api/
 │   │   │   ├── client.test.ts
 │   │   │   ├── client.ts
+│   │   │   ├── proxy-coverage.test.ts
 │   │   │   └── types.ts
 │   │   ├── assets/
 │   │   ├── components/

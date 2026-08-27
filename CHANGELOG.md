@@ -5,6 +5,35 @@ All notable changes to FCC Dashboard are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-08-28
+
+### Fixed
+
+- **`/fcc/catalog` was not proxied in development.** The route was added in
+  1.1.0 but never added to Vite's dev-server proxy map, so under `npm run dev`
+  the request reached Vite instead of the backend and the pricing editor sat
+  permanently in its manual-entry fallback. Invisible to every test: the
+  production build serves the frontend and API from one origin, so the missing
+  entry resolved there, and both the client call and the route were
+  individually correct. A guard now cross-checks every fetched route prefix
+  against the proxy map.
+
+### Changed
+
+- **The FCC catalog is fetched until it is obtained, then never again.** It had
+  its own polling loop, which duplicated a signal already on the wire: `/status`
+  is polled every 10s app-wide and already reports whether FCC is up. The
+  catalog is FCC's *configuration*, not its running state -- it does not change
+  because FCC stopped -- so once held it stays valid. The practical effect is
+  that the pricing editor keeps working with FCC stopped, which was always the
+  correct behaviour: prices live in this app's own config file, not FCC's.
+- **The Database page opens on the `requests` table** instead of an inert
+  "select a table" prompt. That table is the reason the page exists; the others
+  are single-row bookkeeping.
+- Corrected stale Anthropic tier names (`opus`/`sonnet`/`haiku`) in
+  `pricing.py`'s docstrings -- the same stale naming that caused 1.1.0's
+  price-refresh bug, left sitting in the documentation a reader would trust.
+
 ## [1.1.0] - 2026-08-27
 
 ### Added
@@ -64,5 +93,6 @@ First release: single-process dashboard over FCC's gateway log — request feed,
 usage and savings statistics, pricing configuration with catalog-assisted
 refresh, a raw database browser, and FCC process control.
 
+[1.1.1]: https://github.com/FreddyZeta1847/fcc-dashboard/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/FreddyZeta1847/fcc-dashboard/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/FreddyZeta1847/fcc-dashboard/releases/tag/v1.0.0
