@@ -1,4 +1,7 @@
 ﻿.
+├── assets/
+│   ├── logo.png
+│   └── screenshot.png
 ├── backend/
 │   ├── src/
 │   │   └── fcc_dashboard/
@@ -10,6 +13,7 @@
 │   │       ├── db.py
 │   │       ├── dependencies.py
 │   │       ├── log_parser.py
+│   │       ├── ports.py
 │   │       ├── pricing.py
 │   │       ├── process_control.py
 │   │       ├── routes_control.py
@@ -27,6 +31,7 @@
 │   │   ├── test_db.py
 │   │   ├── test_log_parser.py
 │   │   ├── test_placeholder.py
+│   │   ├── test_ports.py
 │   │   ├── test_pricing.py
 │   │   ├── test_process_control.py
 │   │   ├── test_routes_control.py
@@ -40,6 +45,8 @@
 │   ├── pyproject.toml
 │   ├── README.md
 │   └── uv.lock
+├── bin/
+│   └── fcc-dashboard.js
 ├── dashboard request test/
 ├── docs/
 │   └── superpowers/
@@ -125,6 +132,7 @@
 ├── .gitignore
 ├── .thumbnail
 ├── FCC Dashboard.dc.html
+├── package.json
 ├── PROGRESS.md
 ├── README.md
 ├── support.js
