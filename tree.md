@@ -76,8 +76,8 @@
 │   │   ├── components/
 │   │   │   ├── Card.tsx
 │   │   │   ├── ConfirmDialog.tsx
-│   │   │   ├── CumulativeSavingsChart.test.tsx
-│   │   │   ├── CumulativeSavingsChart.tsx
+│   │   │   ├── DailySavingsChart.test.tsx
+│   │   │   ├── DailySavingsChart.tsx
 │   │   │   ├── MoneySavedHeadline.test.tsx
 │   │   │   ├── MoneySavedHeadline.tsx
 │   │   │   ├── PriceRefreshFlow.test.tsx

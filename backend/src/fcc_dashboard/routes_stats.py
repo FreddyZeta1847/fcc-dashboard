@@ -4,7 +4,7 @@ core "money saved" number for a named time range.
 
 Three genuinely different aggregation passes run over the same fetched rows.
 `_aggregate_costs` (feeding `by_provider`) and `_aggregate_daily_savings`
-(feeding `daily_savings`, the Usage page's cumulative-savings chart) both
+(feeding `daily_savings`, the Usage page's daily-savings chart) both
 answer a money/savings question, so they only ever look at priced,
 `status = 'completed'` rows -- an unpriced or pending/error row contributes
 nothing to either. `_aggregate_volume` (feeding `volume_by_provider` and
@@ -277,7 +277,7 @@ def _aggregate_daily_savings(
     end: str,
 ) -> list[DailySavingsEntry]:
     """Sum priced savings per local calendar day, for the Usage page's
-    cumulative-savings chart.
+    daily-savings chart.
 
     Uses the SAME priced-only definition as `_aggregate_costs` (a row only
     contributes if `compute_savings` actually priced it) -- this is a money

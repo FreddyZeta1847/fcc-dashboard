@@ -3,7 +3,7 @@
  * Usage page. Unlike self-fetching panel components elsewhere, this page
  * OWNS the selected RangeName (local useState, defaulting to
  * 'last_7_days' to match Overview's MoneySavedHeadline) and the single
- * useStats(range) call. CumulativeSavingsChart and both VolumeChart
+ * useStats(range) call. DailySavingsChart and both VolumeChart
  * instances mount here as simple, prop-driven children that consume this
  * SAME query result — they must react to the range RangeSelector just
  * picked, not independently guess at one, so fetching is deliberately
@@ -24,7 +24,7 @@ import { useState } from 'react'
 import { useStats } from '../hooks/useStats'
 import { RangeSelector } from '../components/RangeSelector'
 import { VolumeChart } from '../components/VolumeChart'
-import { CumulativeSavingsChart } from '../components/CumulativeSavingsChart'
+import { DailySavingsChart } from '../components/DailySavingsChart'
 import { Card } from '../components/Card'
 import type { RangeName } from '../api/types'
 
@@ -54,7 +54,7 @@ export function Usage() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           <Card accent="green">
-            <CumulativeSavingsChart data={data.daily_savings} />
+            <DailySavingsChart data={data.daily_savings} />
           </Card>
           <Card accent="violet">
             <VolumeChart
