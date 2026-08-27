@@ -15,8 +15,20 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query'
 import { PricingEditor } from './PricingEditor'
+
+/*
+ * Drive React Query's own focus manager rather than dispatching a synthetic
+ * window 'focus' event. jsdom's event never reaches the manager, so a test
+ * built on it cannot fail — verified by removing `staleTime: Infinity` and
+ * watching the suite still pass. This actually toggles the refetch trigger.
+ */
+async function simulateWindowRefocus() {
+  focusManager.setFocused(false)
+  focusManager.setFocused(true)
+  await new Promise((r) => setTimeout(r, 150))
+}
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -234,14 +246,43 @@ describe('PricingEditor + FCC catalog', () => {
 
     expect(screen.queryByLabelText(/not reported by fcc/i)).not.toBeInTheDocument()
   })
-  it('returns to the pickers on its own once FCC becomes reachable', async () => {
+  it('stops fetching the catalog once it has a usable one', async () => {
     /*
-     * The scenario this feature exists for: FCC is down, the editor has
-     * fallen back to manual entry, then FCC is started (from this dashboard
-     * or anywhere else). useFccCatalog polls while unavailable, so the
-     * pickers must come back with no reload and no user action.
+     * The core of the fetch-until-we-have-it-then-stop rule. The catalog is
+     * FCC's configuration, not its running state, so re-fetching it would only
+     * re-learn something already known. `staleTime: Infinity` is what has to
+     * hold here: without it React Query's refetch-on-mount/focus defaults would
+     * fire and this count would climb.
      */
-    let fccUp = false
+    let catalogFetches = 0
+    vi.spyOn(global, 'fetch').mockImplementation((input) => {
+      const url = String(input)
+      if (url === '/fcc/catalog') {
+        catalogFetches += 1
+        return Promise.resolve(new Response(JSON.stringify(catalog), { status: 200 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify(config), { status: 200 }))
+    })
+
+    renderWithClient(<PricingEditor />)
+    await waitFor(() => expect(screen.getByLabelText(/provider/i).tagName).toBe('SELECT'))
+    expect(catalogFetches).toBe(1)
+
+    // Refocus is the trigger most likely to sneak a refetch past the rule,
+    // since React Query listens for it by default.
+    await simulateWindowRefocus()
+
+    expect(catalogFetches).toBe(1)
+  })
+
+  it('keeps the pickers working after FCC goes down, once the catalog is held', async () => {
+    /*
+     * The practical payoff of holding the catalog: prices live in OUR config
+     * file, not FCC's, so adding a pair must not require FCC to be running.
+     * Once the list has loaded, stopping FCC must not drop the editor back to
+     * manual entry.
+     */
+    let fccUp = true
     vi.spyOn(global, 'fetch').mockImplementation((input) => {
       const url = String(input)
       if (url === '/fcc/catalog') {
@@ -253,23 +294,15 @@ describe('PricingEditor + FCC catalog', () => {
     })
 
     renderWithClient(<PricingEditor />)
+    await waitFor(() => expect(screen.getByLabelText(/provider/i).tagName).toBe('SELECT'))
 
-    // Starts in the forced manual fallback.
-    await waitFor(() => expect(screen.getByLabelText(/provider/i).tagName).toBe('INPUT'))
-    expect(screen.getByText(/falling back to manual entry/i)).toBeInTheDocument()
+    // FCC stops. Nothing should re-ask, so the held catalog stays in use.
+    fccUp = false
+    await simulateWindowRefocus()
 
-    fccUp = true
-
-    // No reload, no click -- the poll picks it up.
-    await waitFor(() => expect(screen.getByLabelText(/provider/i).tagName).toBe('SELECT'), {
-      timeout: 12_000,
-    })
+    expect(screen.getByLabelText(/provider/i).tagName).toBe('SELECT')
     expect(screen.queryByText(/falling back to manual entry/i)).not.toBeInTheDocument()
-    // Deliberately a real-time test rather than fake timers: the recovery
-    // depends on useFccCatalog's while-unavailable refetchInterval actually
-    // firing, which is the thing worth proving. Costs one ~5s wait, so the
-    // per-test timeout is raised above vitest's 5s default.
-  }, 20_000)
+  })
 
   it('keeps manual entry when the user chose it, even after FCC returns', async () => {
     /* An explicit choice must not be overridden by FCC coming back. */

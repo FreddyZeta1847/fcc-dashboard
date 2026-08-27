@@ -8,79 +8,62 @@
  * strings that FCC itself reports instead of typing them from memory (an
  * exact-match lookup where a typo fails silently).
  *
- * POLLING IS CONDITIONAL AND BACKS OFF. When FCC is reachable there is no
- * interval at all, matching usePricing's reasoning: this data reflects FCC's
- * configuration, which does not change from request traffic, so polling it
- * would be waste. But when FCC is *unreachable* the editor has fallen back to
- * manual entry, and the event that ends that state — FCC starting — produces
- * no signal this page would otherwise see.
+ * FETCH UNTIL WE HAVE IT, THEN STOP. The whole policy is one rule:
  *
- * The fast rate only earns its keep in one window: the ~15s after a start,
- * where /control/start has already returned but FCC is not listening yet
- * (measured: down at t+5s and t+10s, up at t+15s). Past that window a start is
- * no longer plausibly in flight, so the interval drops to a slow heartbeat
- * rather than hammering at the same rate indefinitely.
+ *     if we do not have a catalog yet -> try again on the next tick
+ *     once we have one                -> never fetch again
  *
- * Three things already bound this further: React Query only runs the interval
- * while a component observes the query (so leaving Settings stops it),
- * `refetchIntervalInBackground` defaults to false (so an unfocused tab stops
- * it), and `refetchOnWindowFocus` catches an FCC that came up while the tab
- * was away. useControlStart/Stop additionally invalidate this query so a
- * dashboard-initiated change is noticed immediately.
+ * The reasoning is that this data is *configuration, not state*. FCC's provider
+ * list does not change because FCC stopped — it changes when the user edits
+ * FCC's own config. So a catalog we already hold stays valid whether FCC is up
+ * or down, and re-fetching it to learn something we already know is exactly the
+ * waste `usePricing` argues against.
+ *
+ * The practical payoff: once the list has loaded, the pricing editor keeps
+ * working with FCC stopped. Prices live in *our* config file, not FCC's, so
+ * there is no reason adding a pair should require FCC to be running.
+ *
+ * `staleTime: Infinity` is what stops the refetch-on-focus/mount/reconnect
+ * defaults from firing once we hold a catalog; `refetchInterval` is what keeps
+ * retrying while we do not. They are the two halves of the same rule.
+ *
+ * Scope note: the cache is in-memory, so "never again" means for this page
+ * session. A reload starts over — which is also how a changed FCC config gets
+ * picked up, since nothing else invalidates this query.
  *
  * The query only errors on a transport failure. FCC being stopped is not an
- * error: the backend answers 200 with `available: false`.
+ * error: the backend answers 200 with `available: false`, which simply reads
+ * here as "still nothing to show, keep trying".
  */
-import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getFccCatalog } from '../api/client'
+import type { FccCatalogResponse } from '../api/types'
 
-/** While a start could plausibly be in flight — FCC takes ~15s to listen. */
-const FAST_POLL_MS = 5_000
+/*
+ * Matches useStatus's cadence deliberately. While the catalog is missing this
+ * is a second request alongside that poll; keeping them on one rhythm makes
+ * the pair predictable instead of interleaving at drifting offsets.
+ */
+const RETRY_INTERVAL_MS = 10_000
 
-/** Once it clearly is not: enough to notice, cheap enough to leave running. */
-const SLOW_POLL_MS = 30_000
-
-/** How long the fast rate lasts after FCC first becomes unreachable. */
-const FAST_WINDOW_MS = 60_000
+/**
+ * A catalog is only useful once FCC reported at least one configured provider.
+ * `available: true` with an empty list means FCC answered but has nothing
+ * configured (or has not discovered it yet), which is not something to settle
+ * on — so that keeps retrying too.
+ */
+function hasUsableCatalog(data: FccCatalogResponse | undefined): boolean {
+  return data?.available === true && data.providers.length > 0
+}
 
 export function useFccCatalog() {
-  // When FCC first went away, or null while it is reachable. A ref rather
-  // than state: it must not itself trigger a render, and the interval
-  // callback reads it at tick time, not at render time.
-  const unavailableSince = useRef<number | null>(null)
-
-  const query = useQuery({
+  return useQuery({
     queryKey: ['fcc-catalog'],
     queryFn: getFccCatalog,
-    staleTime: 30_000,
-    refetchInterval: (q) => {
-      const data = q.state.data
-      // No data yet means the first fetch is still in flight; nothing to poll
-      // for. Reachable means stop entirely.
-      if (!data || data.available) {
-        return false
-      }
-      const since = unavailableSince.current
-      if (since === null) {
-        return FAST_POLL_MS
-      }
-      return Date.now() - since < FAST_WINDOW_MS ? FAST_POLL_MS : SLOW_POLL_MS
-    },
+    // Never goes stale: once held, focus/mount/reconnect must not refetch it.
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchInterval: (query) =>
+      hasUsableCatalog(query.state.data) ? false : RETRY_INTERVAL_MS,
   })
-
-  const available = query.data?.available
-  useEffect(() => {
-    if (available === false) {
-      // Only stamp the first transition, so the window measures how long FCC
-      // has been down rather than resetting on every poll.
-      if (unavailableSince.current === null) {
-        unavailableSince.current = Date.now()
-      }
-    } else {
-      unavailableSince.current = null
-    }
-  }, [available])
-
-  return query
 }

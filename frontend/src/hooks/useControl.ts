@@ -3,41 +3,32 @@
  * TanStack Query mutation hooks for FCC process control: `useControlStart`
  * (POST /control/start) and `useControlStop` (POST /control/stop).
  *
- * Neither invalidates `/status` — its own 10s poll (useStatus.ts, Phase 5)
- * picks up the new FCC state within that window regardless.
+ * Neither invalidates `/status` here — its own 10s poll (useStatus.ts, Phase 5)
+ * picks up the new FCC state within that window, and `Sidebar` additionally
+ * invalidates `['status']` at the call site so the Run/Stop button flips
+ * immediately rather than after the next tick.
  *
- * Both DO invalidate `['fcc-catalog']`, because that query has no such poll
- * while FCC is up, and starting or stopping FCC is exactly what changes it.
- * Concretely: with FCC down, the pricing editor falls back to manual entry;
- * starting FCC from this dashboard has to bring the provider/model pickers
- * back without a page reload.
+ * Neither invalidates `['fcc-catalog']` either, and that is deliberate rather
+ * than an omission. The catalog is FCC's *configuration*, not its running
+ * state: it does not change because FCC started or stopped, only because the
+ * user edited FCC's own config. `useFccCatalog` therefore fetches until it has
+ * a catalog and then stops for good — invalidating here would force exactly
+ * the refetch that policy exists to avoid, to re-learn something already known.
  *
- * Invalidation alone is not sufficient for start — /control/start returns as
- * soon as the process is launched, well before FCC is listening (~15s), so the
- * refetch it triggers will usually still see FCC down. useFccCatalog's own
- * while-unavailable poll is what actually closes that gap; invalidating here
- * just makes the common case feel immediate and covers stop, where the state
- * change is instant.
+ * A genuine FCC config change is picked up on the next page load, since nothing
+ * else invalidates that query.
  */
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { postControlStart, postControlStop } from '../api/client'
 
 export function useControlStart() {
-  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: postControlStart,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['fcc-catalog'] })
-    },
   })
 }
 
 export function useControlStop() {
-  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: postControlStop,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['fcc-catalog'] })
-    },
   })
 }
