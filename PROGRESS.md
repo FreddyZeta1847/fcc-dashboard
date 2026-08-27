@@ -55,3 +55,4 @@ itself — see `CLAUDE.md` for the sanitization rule.
 - 2026-08-25 — PHASE-7-INTEGRATION-POLISH: implementation phase complete — vault 8-phase plan fully done
 - 2026-08-25 — BACKEND--collector: background poll-loop shutdown-safety fix (concurrency gap found while wiring the scheduler)
 - 2026-08-27 — BACKEND: server-startup port-conflict handling decision (two cross-project environment gotchas logged)
+- 2026-08-27 — PRICING-ENGINE: provider/model selection source decision; refresh write-path key bug fixed
