@@ -108,6 +108,30 @@ export interface PricingConfig {
   providers: Record<string, Record<string, PriceEntry>>
 }
 
+export interface FccProvider {
+  provider_id: string
+  display_name: string
+  /*
+   * The string FCC writes into its logs, and therefore the exact value the
+   * collector stores in `requests.provider`. This — NOT provider_id — is what
+   * a pricing entry must be keyed by, or the price silently never matches.
+   */
+  log_tag: string
+  kind: string
+  models: string[]
+}
+
+export interface FccCatalogResponse {
+  /* false when FCC could not be reached; `error` says why. Not an error state
+   * for the UI — it means fall back to manual entry. */
+  available: boolean
+  providers: FccProvider[]
+  /* Distinct provider values already seen in the requests table, used to flag
+   * configured pairs FCC no longer reports. */
+  observed_providers: string[]
+  error: string | null
+}
+
 export interface PricingChange {
   provider: string
   model: string

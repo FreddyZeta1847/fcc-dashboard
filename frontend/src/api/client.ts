@@ -13,6 +13,7 @@
 import type {
   ControlStartResponse,
   ControlStopResponse,
+  FccCatalogResponse,
   PricingConfig,
   PricingRefreshResponse,
   RangeName,
@@ -62,6 +63,11 @@ export async function putPricing(config: PricingConfig): Promise<PricingConfig> 
 export async function postPricingRefresh(): Promise<PricingRefreshResponse> {
   const response = await fetch('/pricing/refresh', { method: 'POST' })
   return parseJsonOrThrow<PricingRefreshResponse>(response)
+}
+
+export async function getFccCatalog(): Promise<FccCatalogResponse> {
+  const response = await fetch('/fcc/catalog')
+  return parseJsonOrThrow<FccCatalogResponse>(response)
 }
 
 export async function getDbTables(): Promise<TablesListResponse> {
