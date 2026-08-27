@@ -189,4 +189,5 @@ def test_openapi_route_set_is_complete():
         "/db/tables/{name}",
         "/control/start",
         "/control/stop",
+        "/fcc/catalog",
     }

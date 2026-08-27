@@ -92,6 +92,7 @@ from . import (
     collector,
     routes_control,
     routes_db,
+    routes_fcc,
     routes_pricing,
     routes_requests,
     routes_stats,
@@ -190,6 +191,7 @@ app.include_router(routes_stats.router)
 app.include_router(routes_pricing.router)
 app.include_router(routes_db.router)
 app.include_router(routes_control.router)
+app.include_router(routes_fcc.router)
 
 # Must stay last: a pure catch-all for whatever no route above matched, so
 # it can never shadow a real API route (see static.py's module docstring).
