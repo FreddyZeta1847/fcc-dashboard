@@ -1,6 +1,6 @@
 [project]
 name = "fcc-dashboard"
-version = "0.1.0"
+version = "1.1.0"
 description = "Backend for the FCC (free-claude-code) monitoring dashboard"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -137,6 +137,7 @@
 │   └── vite.config.ts
 ├── .gitignore
 ├── .thumbnail
+├── CHANGELOG.md
 ├── FCC Dashboard.dc.html
 ├── package.json
 ├── PROGRESS.md
