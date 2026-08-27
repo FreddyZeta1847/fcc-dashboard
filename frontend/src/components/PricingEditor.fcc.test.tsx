@@ -234,4 +234,54 @@ describe('PricingEditor + FCC catalog', () => {
 
     expect(screen.queryByLabelText(/not reported by fcc/i)).not.toBeInTheDocument()
   })
+  it('returns to the pickers on its own once FCC becomes reachable', async () => {
+    /*
+     * The scenario this feature exists for: FCC is down, the editor has
+     * fallen back to manual entry, then FCC is started (from this dashboard
+     * or anywhere else). useFccCatalog polls while unavailable, so the
+     * pickers must come back with no reload and no user action.
+     */
+    let fccUp = false
+    vi.spyOn(global, 'fetch').mockImplementation((input) => {
+      const url = String(input)
+      if (url === '/fcc/catalog') {
+        return Promise.resolve(
+          new Response(JSON.stringify(fccUp ? catalog : unavailableCatalog), { status: 200 }),
+        )
+      }
+      return Promise.resolve(new Response(JSON.stringify(config), { status: 200 }))
+    })
+
+    renderWithClient(<PricingEditor />)
+
+    // Starts in the forced manual fallback.
+    await waitFor(() => expect(screen.getByLabelText(/provider/i).tagName).toBe('INPUT'))
+    expect(screen.getByText(/falling back to manual entry/i)).toBeInTheDocument()
+
+    fccUp = true
+
+    // No reload, no click -- the poll picks it up.
+    await waitFor(() => expect(screen.getByLabelText(/provider/i).tagName).toBe('SELECT'), {
+      timeout: 12_000,
+    })
+    expect(screen.queryByText(/falling back to manual entry/i)).not.toBeInTheDocument()
+    // Deliberately a real-time test rather than fake timers: the recovery
+    // depends on useFccCatalog's while-unavailable refetchInterval actually
+    // firing, which is the thing worth proving. Costs one ~5s wait, so the
+    // per-test timeout is raised above vitest's 5s default.
+  }, 20_000)
+
+  it('keeps manual entry when the user chose it, even after FCC returns', async () => {
+    /* An explicit choice must not be overridden by FCC coming back. */
+    mockApi(catalog)
+    const user = userEvent.setup()
+    renderWithClient(<PricingEditor />)
+
+    await waitFor(() => expect(screen.getByLabelText(/provider/i).tagName).toBe('SELECT'))
+    await user.click(screen.getByRole('button', { name: /enter manually/i }))
+
+    expect(screen.getByLabelText(/provider/i).tagName).toBe('INPUT')
+    // Still manual after re-renders driven by query updates.
+    await waitFor(() => expect(screen.getByLabelText(/provider/i).tagName).toBe('INPUT'))
+  })
 })
