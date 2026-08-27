@@ -35,7 +35,15 @@ function withPairMerged(
   model: string,
   entry: PriceEntry,
 ): PricingConfig {
-  if (provider === 'anthropic' && (model === 'opus' || model === 'sonnet' || model === 'haiku')) {
+  // Match on the provider alone, exactly as PricingEditor's copy of this
+  // function does. This used to also test the tier name against a hardcoded
+  // 'opus'/'sonnet'/'haiku' list, which silently stopped matching when the
+  // tiers were renamed to their full ids (claude-opus-5, ...): an Anthropic
+  // tier then fell through to the branch below and was written to
+  // `providers.anthropic.<tier>` instead of `anthropic.<tier>`, corrupting the
+  // config shape. The backend's REQUIRED_ANTHROPIC_TIERS is the authority on
+  // which tiers exist; this function only needs to know where they live.
+  if (provider === 'anthropic') {
     return { ...config, anthropic: { ...config.anthropic, [model]: entry } }
   }
   return {

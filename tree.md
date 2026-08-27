@@ -12,12 +12,14 @@
 │   │       ├── datetime_utils.py
 │   │       ├── db.py
 │   │       ├── dependencies.py
+│   │       ├── fcc_admin.py
 │   │       ├── log_parser.py
 │   │       ├── ports.py
 │   │       ├── pricing.py
 │   │       ├── process_control.py
 │   │       ├── routes_control.py
 │   │       ├── routes_db.py
+│   │       ├── routes_fcc.py
 │   │       ├── routes_pricing.py
 │   │       ├── routes_requests.py
 │   │       ├── routes_stats.py
@@ -29,6 +31,7 @@
 │   │   ├── test_collector.py
 │   │   ├── test_datetime_utils.py
 │   │   ├── test_db.py
+│   │   ├── test_fcc_admin.py
 │   │   ├── test_log_parser.py
 │   │   ├── test_placeholder.py
 │   │   ├── test_ports.py
@@ -36,6 +39,7 @@
 │   │   ├── test_process_control.py
 │   │   ├── test_routes_control.py
 │   │   ├── test_routes_db.py
+│   │   ├── test_routes_fcc.py
 │   │   ├── test_routes_pricing.py
 │   │   ├── test_routes_requests.py
 │   │   ├── test_routes_stats.py
@@ -78,6 +82,7 @@
 │   │   │   ├── MoneySavedHeadline.tsx
 │   │   │   ├── PriceRefreshFlow.test.tsx
 │   │   │   ├── PriceRefreshFlow.tsx
+│   │   │   ├── PricingEditor.fcc.test.tsx
 │   │   │   ├── PricingEditor.test.tsx
 │   │   │   ├── PricingEditor.tsx
 │   │   │   ├── RangeSelector.test.tsx
@@ -95,6 +100,7 @@
 │   │   ├── hooks/
 │   │   │   ├── useControl.ts
 │   │   │   ├── useDbTables.ts
+│   │   │   ├── useFccCatalog.ts
 │   │   │   ├── usePricing.ts
 │   │   │   ├── usePricingMutations.ts
 │   │   │   ├── useRecentRequests.ts
