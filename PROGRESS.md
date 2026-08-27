@@ -54,3 +54,4 @@ itself — see `CLAUDE.md` for the sanitization rule.
 - 2026-08-25 — BACKEND--collector: background poll-loop scheduling gap fixed (never wired in since Phase 2, found while planning Phase 7)
 - 2026-08-25 — PHASE-7-INTEGRATION-POLISH: implementation phase complete — vault 8-phase plan fully done
 - 2026-08-25 — BACKEND--collector: background poll-loop shutdown-safety fix (concurrency gap found while wiring the scheduler)
+- 2026-08-27 — BACKEND: server-startup port-conflict handling decision (two cross-project environment gotchas logged)
